@@ -1,7 +1,8 @@
-# INSERT PROJECT NAME HERE
+# Sheet Navigator
 
-INSERT DESCRIPTION HERE. Source in `src/INSERT_PACKAGE_NAME/`, tests in
-`tests/`.
+Excel VSTO add-in that shows a Worksheets pane for any workbook, one pane per
+Excel window, with the pane's open state and width remembered per file. Source
+in `SheetNavigator/`, solution-level docs at the repo root.
 
 ## Working agreement
 
@@ -15,52 +16,53 @@ your own.
 
 ## Dev environment
 
-- Python 3.12+ (`requires-python = ">=3.12"`). Do not use 3.13-only syntax —
-  pyright is pinned to 3.12 and flags it. `.python-version` pins the local
-  `.venv` to 3.12, the oldest supported version.
-- `uv sync` builds `.venv` and installs everything, including the `dev`
-  dependency group. `uv.lock` is committed, so the versions are exact.
-- Add a dependency with `uv add <pkg>`, or `uv add --dev <pkg>` for tooling.
-  Do not hand-edit the dependency lists in pyproject.toml.
+- Visual Studio 2022 or later with the **Office/SharePoint development**
+  workload, targeting .NET Framework 4.7.2.
+- ClickOnce signing needs a certificate that is not in the repo: Project
+  Properties, Signing, Create Test Certificate before the first build.
+- Any full build registers the add-in with Excel from `bin\Release`; Build,
+  Clean Solution unregisters it.
 
 ## Build and test commands
 
-From the repository root, one command per call, never chained:
+From `SheetNavigator\` (the project folder), one command per call, never
+chained:
 
-      uv run pytest
-      uv run ruff check .
-      uv run ruff format .
-      uv run pyright
+      "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" SheetNavigator.csproj -t:Compile -p:Configuration=Release
 
-All four green before you call it done. `pytest` measures coverage and fails
-below the floor set in pyproject.toml.
+That compiles without registering the add-in. There is no test project;
+behavior is verified by the human in Excel with Ctrl+F5 (Release, start without
+debugging). Never use the Debug configuration or F5.
 
-Never run any of the four as a baseline check before you have changed
-anything, including when setting up a worktree. A skill step that says to
-is overridden by this rule.
+Never run a build as a baseline check before you have changed anything,
+including when setting up a worktree. A skill step that says to is overridden
+by this rule.
 
 ## Code style
 
-- Modern idioms: full type hints (built-in generics, `X | None`),
-  `pathlib.Path` over `os.path`, dataclasses, f-strings, match statements
-  where natural.
-- Ruff formats at 88 columns, double quotes. Ruff lint and pyright (standard
-  mode) must pass.
-- Comments explain why, not what, except where the code is likely hard to read
-  for a newcomer to the language.
+- .NET naming: PascalCase for types, methods and constants (no ALL_CAPS),
+  camelCase for parameters, locals and private fields. Descriptive names, never
+  Excel's VBA-style `Wb`/`Sh` abbreviations.
+- Constants first in a class, nested classes last.
+- Every method gets a one- or two-line `<summary>`. Comments explain why, not
+  what. No fluff.
+- Source files keep their UTF-8 BOM and CRLF endings (see .editorconfig).
+- Anything that changes Excel state temporarily (ScreenUpdating, events) is
+  restored in a `finally`. COM calls that can fail while Excel is busy are
+  wrapped in try/catch.
 
 ## Testing
 
-- All new code gets pytest tests. Write tests first when practical.
-- Tests live in `tests/`.
+- No test project yet. Verify with the compile command above, then tell the
+  human exactly what to check in Excel after Ctrl+F5.
 
 ## Docs
 
-Update project meta as appropriate: STATUS.md, WORKLOG.md, CHANGELOG.md,
-TODO.md, README.md. CHANGELOG and TODO entries are single-line when possible.
+Update project meta as appropriate: STATUS.md, CHANGELOG.md, TODO.md, README.md,
+release/README.txt. CHANGELOG and TODO entries are single-line when possible.
 
-New entries in STATUS.md, WORKLOG.md, CHANGELOG.md and TODO.md go at the top of
-their section, never mid-list or at the bottom.
+New entries in STATUS.md, CHANGELOG.md and TODO.md go at the top of their
+section, never mid-list or at the bottom.
 
 ## Commits and hand-off
 
