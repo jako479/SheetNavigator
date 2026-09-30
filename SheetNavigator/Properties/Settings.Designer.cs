@@ -45,5 +45,17 @@ namespace SheetNavigator.Properties {
                 this["UpgradeRequired"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("Right")]
+        public string DefaultDockPosition {
+            get {
+                return ((string)(this["DefaultDockPosition"]));
+            }
+            set {
+                this["DefaultDockPosition"] = value;
+            }
+        }
     }
 }

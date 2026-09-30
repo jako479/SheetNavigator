@@ -6,5 +6,6 @@ What changed for users, grouped by release version. Not a commit log.
 
 - Initial release.
 - Worksheets pane on the View tab lists the active workbook's visible sheets; click to jump.
-- Pane open state and width are remembered per workbook file.
+- Pane open state, docked side and width are remembered per workbook file.
+- A new pane opens on the side the pane was last docked on; right to start.
 - Works in every workbook window.
