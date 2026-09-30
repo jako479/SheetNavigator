@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnLoad">
+  <ribbon>
+    <tabs>
+      <tab idMso="TabView">
+        <group id="SheetNavigatorGroup" label="Navigate">
+          <toggleButton id="SheetNavigatorWorksheetsToggle"
+                        label="Worksheets"
+                        size="large"
+                        imageMso="DocumentMapReadingView"
+                        keytip="SN"
+                        screentip="Worksheets pane"
+                        supertip="Show or hide the Sheet Navigator pane, which lists the worksheets in the active workbook."
+                        onAction="OnWorksheetsToggle"
+                        getPressed="GetWorksheetsPressed" />
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

@@ -1,0 +1,19 @@
+# Visual Studio
+.vs/
+bin/
+obj/
+*.user
+*.suo
+
+# Signing key: create your own via Project Properties, Signing
+*.pfx
+
+# ClickOnce output, created by Publish
+publish/
+
+# AI
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
