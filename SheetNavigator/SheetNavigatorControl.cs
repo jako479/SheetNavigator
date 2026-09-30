@@ -6,7 +6,7 @@ using Excel = Microsoft.Office.Interop.Excel;
 namespace SheetNavigator
 {
     /// <summary>
-    /// The pane's content: a list of the workbook's visible sheets. Double-click a name to activate that sheet.
+    /// The pane's content: a list of the workbook's visible sheets. Selecting a name activates that sheet.
     /// </summary>
     public partial class SheetNavigatorControl : UserControl
     {
@@ -14,6 +14,11 @@ namespace SheetNavigator
         /// Excel's generic "can't do that now" error, raised for example while a sheet tab name is being typed.
         /// </summary>
         private const int ExcelBusyHResult = unchecked((int)0x800A03EC);
+
+        /// <summary>
+        /// True while this control moves the highlight itself, so only the user's selections trigger a jump.
+        /// </summary>
+        private bool isUpdatingSelection;
 
         /// <summary>
         /// The workbook shown in the window this pane belongs to. Falls back to the active workbook.
@@ -29,7 +34,8 @@ namespace SheetNavigator
         {
             InitializeComponent();
 
-            this.WorksheetList.DoubleClick += new EventHandler(WorksheetList_DoubleClick);
+            // A single click (or arrow key) selects and jumps
+            this.WorksheetList.SelectedIndexChanged += new EventHandler(WorksheetList_SelectedIndexChanged);
 
             // Excel raises no event for a sheet rename or reorder, so refresh as the pointer arrives
             this.WorksheetList.MouseEnter += new EventHandler(WorksheetList_MouseEnter);
@@ -40,6 +46,8 @@ namespace SheetNavigator
         /// </summary>
         public void RefreshWorksheets(Excel.Workbook activeWorkbook)
         {
+            bool wasUpdating = isUpdatingSelection;
+            isUpdatingSelection = true;
             this.WorksheetList.BeginUpdate();
             try
             {
@@ -61,14 +69,17 @@ namespace SheetNavigator
             finally
             {
                 this.WorksheetList.EndUpdate();
+                isUpdatingSelection = wasUpdating;
             }
         }
 
         /// <summary>
-        /// Moves the highlight to the workbook's active sheet.
+        /// Moves the highlight to the workbook's active sheet without triggering a jump.
         /// </summary>
         private void HighlightActiveSheet(Excel.Workbook workbook)
         {
+            bool wasUpdating = isUpdatingSelection;
+            isUpdatingSelection = true;
             try
             {
                 if (workbook?.ActiveSheet is Excel.Worksheet currentSheet)
@@ -77,6 +88,10 @@ namespace SheetNavigator
                 }
             }
             catch { /* Leave the highlight alone */ }
+            finally
+            {
+                isUpdatingSelection = wasUpdating;
+            }
         }
 
         /// <summary>
@@ -126,12 +141,12 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Activates the double-clicked sheet. If the jump cannot happen, the list is refreshed
+        /// Activates the sheet the user selected. If the jump cannot happen, the list is refreshed
         /// and the highlight returns to the sheet Excel is still on.
         /// </summary>
-        private void WorksheetList_DoubleClick(object sender, EventArgs e)
+        private void WorksheetList_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (this.WorksheetList.SelectedItem == null) return;
+            if (isUpdatingSelection || this.WorksheetList.SelectedItem == null) return;
 
             string selectedSheetName = this.WorksheetList.SelectedItem.ToString();
             Excel.Application app = Globals.ThisAddIn.Application;
