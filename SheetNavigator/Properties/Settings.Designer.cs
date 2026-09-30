@@ -57,5 +57,17 @@ namespace SheetNavigator.Properties {
                 this["DefaultDockPosition"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("150")]
+        public int DefaultWidth {
+            get {
+                return ((int)(this["DefaultWidth"]));
+            }
+            set {
+                this["DefaultWidth"] = value;
+            }
+        }
     }
 }

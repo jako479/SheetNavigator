@@ -23,8 +23,8 @@ STEP 3: USE IT
 * On the View tab, in the Navigate group, click "Worksheets" to
   show or hide the pane. Excel remembers your choice, and the pane's
   docked side and width, for each workbook file.
-* A new pane opens on the side you last docked a pane on (right at
-  first).
+* A new pane opens on the side and at the width you last used (right,
+  150 points at first).
 
 REQUIREMENTS
 ------------

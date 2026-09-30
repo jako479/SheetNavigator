@@ -11,5 +11,8 @@
     <Setting Name="DefaultDockPosition" Type="System.String" Scope="User">
       <Value Profile="(Default)">Right</Value>
     </Setting>
+    <Setting Name="DefaultWidth" Type="System.Int32" Scope="User">
+      <Value Profile="(Default)">150</Value>
+    </Setting>
   </Settings>
 </SettingsFile>

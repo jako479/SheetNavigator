@@ -18,10 +18,10 @@ namespace SheetNavigator
     public partial class ThisAddIn
     {
         /// <summary>Docked side used when the saved default side cannot be read.</summary>
-        private const Office.MsoCTPDockPosition FallbackPaneSide = Office.MsoCTPDockPosition.msoCTPDockPositionRight;
+        private const Office.MsoCTPDockPosition FallbackDockPosition = Office.MsoCTPDockPosition.msoCTPDockPositionRight;
 
-        /// <summary>Pane width in points for a workbook with no saved width. Points already scale with DPI.</summary>
-        private const int DefaultPaneWidth = 150;
+        /// <summary>Pane width in points used when the saved default width cannot be read. Points already scale with DPI.</summary>
+        private const int FallbackWidth = 150;
 
         /// <summary>
         /// Ceiling for saved widths, on both save and load, to reject a garbage value in the settings file.
@@ -84,24 +84,37 @@ namespace SheetNavigator
         /// The side the user last docked a pane on. New panes, and tracked workbooks whose saved
         /// side cannot be read, open on this side.
         /// </summary>
-        private Office.MsoCTPDockPosition DefaultPaneSide
+        private Office.MsoCTPDockPosition DefaultDockPosition
         {
             get
             {
-                return ParseSide(ReadSetting(() => Properties.Settings.Default.DefaultDockPosition), FallbackPaneSide);
+                return SavedDockPosition(ReadSetting(() => Properties.Settings.Default.DefaultDockPosition), FallbackDockPosition);
             }
         }
 
         /// <summary>
-        /// Makes a docked side the default for new panes, if it is not already.
+        /// The width the user last left a docked pane at. New panes, and tracked workbooks whose
+        /// saved width cannot be read, open at this width.
         /// </summary>
-        private void RememberDefaultSide(Office.MsoCTPDockPosition side)
+        private int DefaultWidth
         {
-            if (DefaultPaneSide == side) return;
+            get
+            {
+                return ClampPaneWidth(ReadSetting(() => Properties.Settings.Default.DefaultWidth), FallbackWidth);
+            }
+        }
 
-            Properties.Settings.Default.DefaultDockPosition = SideName(side);
+        /// <summary>
+        /// Makes a docked pane's side and width the defaults for new panes, if they are not already.
+        /// </summary>
+        private void SaveDefaults(Office.MsoCTPDockPosition side, int width)
+        {
+            if (DefaultDockPosition == side && DefaultWidth == width) return;
+
+            Properties.Settings.Default.DefaultDockPosition = DockPositionName(side);
+            Properties.Settings.Default.DefaultWidth = width;
             SaveSettings();
-            Diagnostics.Write($"Default side is now {SideName(side)}");
+            Diagnostics.Write($"Defaults are now {DockPositionName(side)}, width {width}");
         }
 
         /// <summary>
@@ -354,7 +367,7 @@ namespace SheetNavigator
                 }
                 entry.Control.RefreshWorksheets(workbook);
                 SetPaneVisibleSilently(entry.Pane, true);
-                Diagnostics.Write($"Restored pane for {workbook.Name} (window {entry.Hwnd}, {SideName(savedSide)}, width {savedWidth})");
+                Diagnostics.Write($"Restored pane for {workbook.Name} (window {entry.Hwnd}, {DockPositionName(savedSide)}, width {savedWidth})");
             }
             catch (Exception ex) { Diagnostics.Write("RestoreSidebar failed: " + ex); }
         }
@@ -560,8 +573,8 @@ namespace SheetNavigator
             CustomTaskPane pane = this.CustomTaskPanes.Add(control, "Worksheets", window);
             try
             {
-                pane.DockPosition = DefaultPaneSide;
-                pane.Width = DefaultPaneWidth;
+                pane.DockPosition = DefaultDockPosition;
+                pane.Width = DefaultWidth;
 
                 // Width is meaningless when docked top or bottom, so keep the pane on a side. Excel's
                 // "NoHorizontal" is the restriction compatible with a side-docked pane, despite its name.
@@ -656,9 +669,12 @@ namespace SheetNavigator
             return workbook != null && !string.IsNullOrEmpty(workbook.Path);
         }
 
-        private static int ClampPaneWidth(int width)
+        /// <summary>
+        /// Keeps a width within the saved range; a width of zero or less (a garbage value) is the fallback.
+        /// </summary>
+        private static int ClampPaneWidth(int width, int fallback)
         {
-            if (width <= 0) return DefaultPaneWidth;
+            if (width <= 0) return fallback;
             return Math.Min(MaxPaneWidth, width);
         }
 
@@ -675,7 +691,7 @@ namespace SheetNavigator
         /// <summary>
         /// The side as written in settings: "Left" or "Right".
         /// </summary>
-        private static string SideName(Office.MsoCTPDockPosition side)
+        private static string DockPositionName(Office.MsoCTPDockPosition side)
         {
             return side == Office.MsoCTPDockPosition.msoCTPDockPositionRight ? "Right" : "Left";
         }
@@ -683,7 +699,7 @@ namespace SheetNavigator
         /// <summary>
         /// Reads a saved side; anything but "Left" or "Right" (a garbage value) is the fallback.
         /// </summary>
-        private static Office.MsoCTPDockPosition ParseSide(string value, Office.MsoCTPDockPosition fallback)
+        private static Office.MsoCTPDockPosition SavedDockPosition(string value, Office.MsoCTPDockPosition fallback)
         {
             if (string.Equals(value, "Right", StringComparison.OrdinalIgnoreCase))
             {
@@ -698,27 +714,27 @@ namespace SheetNavigator
 
         /// <summary>
         /// Records a pane's side and width for its workbook, replacing any older entry, and makes a
-        /// docked side the default for new panes. A floating pane keeps what is already saved (or the
-        /// defaults), so only docked state is ever written. Skips unsaved workbooks and entries already on file.
+        /// docked pane's side and width the defaults for new panes. A floating pane keeps what is already
+        /// saved (or the defaults), so only docked state is ever written. Skips unsaved workbooks and entries already on file.
         /// </summary>
         private void SaveTrackedPane(Excel.Workbook workbook, CustomTaskPane pane)
         {
             if (!HasPath(workbook)) return;
 
             bool docked = IsDockedOnSide(pane);
-            if (docked) RememberDefaultSide(pane.DockPosition);
+            if (docked) SaveDefaults(pane.DockPosition, ClampPaneWidth(pane.Width, DefaultWidth));
 
             string path = workbook.FullName;
             bool tracked = TryGetTrackedPane(path, out Office.MsoCTPDockPosition savedSide, out int savedWidth);
 
             Office.MsoCTPDockPosition side = docked ? pane.DockPosition : savedSide;
-            int width = docked ? ClampPaneWidth(pane.Width) : savedWidth;
+            int width = docked ? ClampPaneWidth(pane.Width, DefaultWidth) : savedWidth;
             if (tracked && savedSide == side && savedWidth == width) return;
 
             RemoveTrackedEntries(path);
-            TrackedFiles.Add($"{path}|{SideName(side)}|{width}");
+            TrackedFiles.Add($"{path}|{DockPositionName(side)}|{width}");
             SaveSettings();
-            Diagnostics.Write($"Tracked {path} at {SideName(side)}, width {width}");
+            Diagnostics.Write($"Tracked {path} at {DockPositionName(side)}, width {width}");
         }
 
         /// <summary>
@@ -741,16 +757,16 @@ namespace SheetNavigator
         /// </summary>
         private bool TryGetTrackedPane(string path, out Office.MsoCTPDockPosition side, out int width)
         {
-            side = DefaultPaneSide;
-            width = DefaultPaneWidth;
+            side = DefaultDockPosition;
+            width = DefaultWidth;
 
             foreach (string entry in TrackedFiles)
             {
                 if (!IsEntryForPath(entry, path)) continue;
 
                 string[] values = entry.Substring(path.Length + 1).Split('|');
-                if (values.Length > 0) side = ParseSide(values[0], side);
-                if (values.Length > 1 && int.TryParse(values[1], out int parsedWidth)) width = ClampPaneWidth(parsedWidth);
+                if (values.Length > 0) side = SavedDockPosition(values[0], side);
+                if (values.Length > 1 && int.TryParse(values[1], out int parsedWidth)) width = ClampPaneWidth(parsedWidth, width);
                 return true;
             }
 
