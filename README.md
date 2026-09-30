@@ -16,8 +16,12 @@ An Excel add-in that adds a **Worksheets** pane listing the sheets in the active
 ## Use
 
 - **View, Navigate, Worksheets** shows or hides the pane. Press Alt to see the KeyTips.
-- Click a sheet in the pane to activate it. Arrow keys work too.
+- Click a sheet in the pane to activate it.
 - The pane's open state and width are remembered for each workbook file. This is stored in your user profile; nothing is written to the workbook.
+
+## Troubleshooting
+
+The add-in writes a short log of pane events and any unexpected error to `%TEMP%\SheetNavigator.log`.
 
 ## Uninstall
 

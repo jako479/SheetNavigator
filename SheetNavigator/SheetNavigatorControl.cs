@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -6,7 +7,8 @@ using Excel = Microsoft.Office.Interop.Excel;
 namespace SheetNavigator
 {
     /// <summary>
-    /// The pane's content: a list of the workbook's visible sheets. Selecting a name activates that sheet.
+    /// The pane's content: a list of the workbook's visible sheets. Clicking a name activates
+    /// that sheet in this pane's own window, so several windows on one workbook stay independent.
     /// </summary>
     public partial class SheetNavigatorControl : UserControl
     {
@@ -21,7 +23,12 @@ namespace SheetNavigator
         private bool isUpdatingSelection;
 
         /// <summary>
-        /// The workbook shown in the window this pane belongs to. Falls back to the active workbook.
+        /// The Excel window this pane belongs to. Each window has its own active sheet.
+        /// </summary>
+        internal Excel.Window Window { get; set; }
+
+        /// <summary>
+        /// The workbook shown in that window. Falls back to the active workbook.
         /// </summary>
         internal Excel.Workbook Workbook { get; set; }
 
@@ -34,60 +41,92 @@ namespace SheetNavigator
         {
             InitializeComponent();
 
-            // A single click (or arrow key) selects and jumps
+            // A single click selects and jumps; keys are swallowed so the highlight can only move by mouse
             this.WorksheetList.SelectedIndexChanged += new EventHandler(WorksheetList_SelectedIndexChanged);
+            this.WorksheetList.KeyDown += new KeyEventHandler(WorksheetList_KeyDown);
 
-            // Excel raises no event for a sheet rename or reorder, so refresh as the pointer arrives
+            // Excel raises no event for a sheet rename or reorder, so check as the pointer arrives
             this.WorksheetList.MouseEnter += new EventHandler(WorksheetList_MouseEnter);
         }
 
         /// <summary>
-        /// Rebuilds the list from the workbook's visible sheets and highlights the active one.
+        /// Brings the list in line with the workbook: rebuilds it only if the visible sheet names
+        /// changed (added, removed, renamed, reordered, hidden or unhidden), then highlights the active sheet.
         /// </summary>
         public void RefreshWorksheets(Excel.Workbook activeWorkbook)
         {
-            bool wasUpdating = isUpdatingSelection;
-            isUpdatingSelection = true;
-            this.WorksheetList.BeginUpdate();
-            try
-            {
-                this.WorksheetList.Items.Clear();
+            if (IsDisposed || activeWorkbook == null) return;
 
-                if (activeWorkbook != null)
+            List<string> names = VisibleSheetNames(activeWorkbook);
+            if (!SameAsList(names))
+            {
+                RunWithoutJumping(() =>
                 {
-                    foreach (Excel.Worksheet ws in activeWorkbook.Worksheets)
+                    this.WorksheetList.BeginUpdate();
+                    try
                     {
-                        if (ws.Visible == Excel.XlSheetVisibility.xlSheetVisible)
-                        {
-                            this.WorksheetList.Items.Add(ws.Name);
-                        }
+                        this.WorksheetList.Items.Clear();
+                        foreach (string name in names) this.WorksheetList.Items.Add(name);
                     }
+                    finally
+                    {
+                        this.WorksheetList.EndUpdate();
+                    }
+                });
+            }
 
-                    HighlightActiveSheet(activeWorkbook);
-                }
-            }
-            finally
-            {
-                this.WorksheetList.EndUpdate();
-                isUpdatingSelection = wasUpdating;
-            }
+            HighlightActiveSheet();
         }
 
         /// <summary>
-        /// Moves the highlight to the workbook's active sheet without triggering a jump.
+        /// Moves the highlight to this window's active sheet without triggering a jump.
         /// </summary>
-        private void HighlightActiveSheet(Excel.Workbook workbook)
+        public void HighlightActiveSheet()
+        {
+            if (IsDisposed) return;
+
+            RunWithoutJumping(() =>
+            {
+                try
+                {
+                    object active = Window != null ? Window.ActiveSheet : TargetWorkbook?.ActiveSheet;
+                    if (active is Excel.Worksheet currentSheet)
+                    {
+                        this.WorksheetList.SelectedItem = currentSheet.Name;
+                    }
+                }
+                catch { /* Leave the highlight alone */ }
+            });
+        }
+
+        private static List<string> VisibleSheetNames(Excel.Workbook workbook)
+        {
+            List<string> names = new List<string>();
+            foreach (Excel.Worksheet ws in workbook.Worksheets)
+            {
+                if (ws.Visible == Excel.XlSheetVisibility.xlSheetVisible) names.Add(ws.Name);
+            }
+            return names;
+        }
+
+        private bool SameAsList(List<string> names)
+        {
+            if (this.WorksheetList.Items.Count != names.Count) return false;
+            for (int i = 0; i < names.Count; i++)
+            {
+                if (!string.Equals(this.WorksheetList.Items[i] as string, names[i], StringComparison.Ordinal)) return false;
+            }
+            return true;
+        }
+
+        private void RunWithoutJumping(Action action)
         {
             bool wasUpdating = isUpdatingSelection;
             isUpdatingSelection = true;
             try
             {
-                if (workbook?.ActiveSheet is Excel.Worksheet currentSheet)
-                {
-                    this.WorksheetList.SelectedItem = currentSheet.Name;
-                }
+                action();
             }
-            catch { /* Leave the highlight alone */ }
             finally
             {
                 isUpdatingSelection = wasUpdating;
@@ -95,9 +134,9 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Rebuilds the list if Excel will answer, otherwise just re-highlights the active sheet.
+        /// Refreshes if Excel will answer, otherwise just re-highlights the active sheet.
         /// </summary>
-        private void RefreshQuietly()
+        internal void RefreshQuietly()
         {
             try
             {
@@ -106,7 +145,7 @@ namespace SheetNavigator
 
                 if (IsExcelEditing(Globals.ThisAddIn.Application))
                 {
-                    HighlightActiveSheet(workbook);
+                    HighlightActiveSheet();
                 }
                 else
                 {
@@ -141,20 +180,31 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Activates the sheet the user selected. If the jump cannot happen, the list is refreshed
-        /// and the highlight returns to the sheet Excel is still on.
+        /// Blocks keyboard navigation in the list; Excel's Ctrl+PgUp/PgDn already covers that.
+        /// </summary>
+        private void WorksheetList_KeyDown(object sender, KeyEventArgs e)
+        {
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+
+        /// <summary>
+        /// Activates the selected sheet in this pane's window. If the jump cannot happen,
+        /// the list is refreshed and the highlight returns to the sheet the window is still on.
         /// </summary>
         private void WorksheetList_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (isUpdatingSelection || this.WorksheetList.SelectedItem == null) return;
+            if (isUpdatingSelection || IsDisposed) return;
 
-            string selectedSheetName = this.WorksheetList.SelectedItem.ToString();
             Excel.Application app = Globals.ThisAddIn.Application;
             bool jumped = false;
             bool? previousScreenUpdating = null;
 
             try
             {
+                if (this.WorksheetList.SelectedItem == null) return;
+                string selectedSheetName = this.WorksheetList.SelectedItem.ToString();
+
                 Excel.Workbook workbook = TargetWorkbook;
                 if (workbook == null || IsExcelEditing(app)) return;
 
@@ -165,6 +215,8 @@ namespace SheetNavigator
                 previousScreenUpdating = app.ScreenUpdating;
                 app.ScreenUpdating = false;
 
+                // Worksheet.Activate acts on the workbook's active window, so make it this one first
+                Window?.Activate();
                 targetSheet.Activate();
                 jumped = true;
             }
@@ -174,6 +226,7 @@ namespace SheetNavigator
             }
             catch (Exception ex)
             {
+                Diagnostics.Write("Jump failed: " + ex);
                 MessageBox.Show($"Could not jump to sheet: {ex.Message}", "Navigation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             finally
