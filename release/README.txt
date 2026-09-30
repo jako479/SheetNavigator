@@ -22,9 +22,10 @@ STEP 3: USE IT
 * Open any workbook.
 * On the View tab, in the Navigate group, click "Worksheets" to
   show or hide the pane. Excel remembers your choice, and the pane's
-  docked side and width, for each workbook file.
-* A new pane opens on the side and at the width you last used (right,
-  150 points at first).
+  position (left, right or floating) and width, for each workbook
+  file, even while the pane is hidden.
+* A new pane opens where you last had one, at the width you last used
+  (right, 150 points at first).
 
 REQUIREMENTS
 ------------

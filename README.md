@@ -17,8 +17,8 @@ An Excel add-in that adds a **Worksheets** pane listing the sheets in the active
 
 - **View, Navigate, Worksheets** shows or hides the pane. Press Alt to see the KeyTips.
 - Click a sheet in the pane to activate it.
-- The pane's open state, docked side (left or right) and width are remembered for each workbook file. This is stored in your user profile; nothing is written to the workbook.
-- A new pane opens on the side and at the width you last used (right, 150 points at first).
+- The pane's open state, position (left, right or floating) and width are remembered for each workbook file, and kept while the pane is hidden. This is stored in your user profile; nothing is written to the workbook. See DESIGN.md for the details.
+- A new pane opens where you last had one, at the width you last used (right, 150 points at first).
 
 ## Troubleshooting
 

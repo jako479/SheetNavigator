@@ -25,12 +25,12 @@ namespace SheetNavigator.Properties {
 
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        public global::System.Collections.Specialized.StringCollection TrackedFiles {
+        public global::System.Collections.Specialized.StringCollection FileEntries {
             get {
-                return ((global::System.Collections.Specialized.StringCollection)(this["TrackedFiles"]));
+                return ((global::System.Collections.Specialized.StringCollection)(this["FileEntries"]));
             }
             set {
-                this["TrackedFiles"] = value;
+                this["FileEntries"] = value;
             }
         }
 

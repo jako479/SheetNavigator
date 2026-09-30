@@ -12,8 +12,8 @@ namespace SheetNavigator
 {
     /// <summary>
     /// Excel add-in that shows a "Worksheets" task pane listing the sheets of a workbook.
-    /// Each Excel window gets its own pane. Which workbooks show the pane, and on which side and
-    /// at what width, is remembered per user in the add-in's settings.
+    /// Each Excel window gets its own pane. Each workbook file keeps an entry in the user's settings
+    /// saying whether its pane is shown, where it is docked and how wide it is. See DESIGN.md.
     /// </summary>
     public partial class ThisAddIn
     {
@@ -44,8 +44,8 @@ namespace SheetNavigator
         private readonly Timer refreshTimer = new Timer { Interval = 1000 };
 
         /// <summary>
-        /// True while the add-in sets a pane's <c>Visible</c>, <c>DockPosition</c> or <c>Width</c>
-        /// itself, so the pane's change handlers only react to user actions.
+        /// True while the add-in shows or hides a pane itself, so the pane's change handlers only
+        /// react to user actions.
         /// </summary>
         private bool isProgrammaticPaneChange = false;
 
@@ -63,26 +63,26 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Saved "path|side|width" entries, one per tracked workbook. Created on first use.
+        /// Saved "path|dock|width|visible" entries, one per workbook file. Created on first use.
         /// </summary>
-        private StringCollection TrackedFiles
+        private StringCollection FileEntries
         {
             get
             {
                 return ReadSetting(() =>
                 {
-                    if (Properties.Settings.Default.TrackedFiles == null)
+                    if (Properties.Settings.Default.FileEntries == null)
                     {
-                        Properties.Settings.Default.TrackedFiles = new StringCollection();
+                        Properties.Settings.Default.FileEntries = new StringCollection();
                     }
-                    return Properties.Settings.Default.TrackedFiles;
+                    return Properties.Settings.Default.FileEntries;
                 });
             }
         }
 
         /// <summary>
-        /// The side the user last docked a pane on. New panes, and tracked workbooks whose saved
-        /// side cannot be read, open on this side.
+        /// The dock position the user last used, floating included. New panes, and workbooks whose
+        /// entry's dock position cannot be read, open here.
         /// </summary>
         private Office.MsoCTPDockPosition DefaultDockPosition
         {
@@ -93,8 +93,8 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// The width the user last left a docked pane at. New panes, and tracked workbooks whose
-        /// saved width cannot be read, open at this width.
+        /// The width the user last used. New panes, and workbooks whose entry's width cannot be
+        /// read, open at this width.
         /// </summary>
         private int DefaultWidth
         {
@@ -105,16 +105,16 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Makes a docked pane's side and width the defaults for new panes, if they are not already.
+        /// Makes a pane's dock position and width the defaults for new panes, if they are not already.
         /// </summary>
-        private void SaveDefaults(Office.MsoCTPDockPosition side, int width)
+        private void SaveDefaults(Office.MsoCTPDockPosition dock, int width)
         {
-            if (DefaultDockPosition == side && DefaultWidth == width) return;
+            if (DefaultDockPosition == dock && DefaultWidth == width) return;
 
-            Properties.Settings.Default.DefaultDockPosition = DockPositionName(side);
+            Properties.Settings.Default.DefaultDockPosition = DockPositionName(dock);
             Properties.Settings.Default.DefaultWidth = width;
             SaveSettings();
-            Diagnostics.Write($"Defaults are now {DockPositionName(side)}, width {width}");
+            Diagnostics.Write($"Defaults are now {DockPositionName(dock)}, width {width}");
         }
 
         /// <summary>
@@ -151,7 +151,7 @@ namespace SheetNavigator
 
         /// <summary>
         /// A user.config left truncated by a crash makes every settings call throw until it is deleted.
-        /// Deletes it and reloads the defaults; the tracked list starts over.
+        /// Deletes it and reloads the defaults; the file entries start over.
         /// </summary>
         private static void RecoverSettings(ConfigurationErrorsException ex)
         {
@@ -267,7 +267,9 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Records a visible pane once a new workbook has been saved and has a path.
+        /// After a save under a new path (first save or Save As), writes the workbook's pane state as that
+        /// path's entry, replacing any entry the path already had; a shown pane also sets the defaults.
+        /// A save under the same path writes nothing.
         /// </summary>
         private void Application_WorkbookAfterSave(Excel.Workbook workbook, bool success)
         {
@@ -275,14 +277,29 @@ namespace SheetNavigator
 
             try
             {
+                if (!HasPath(workbook)) return;
+                string path = workbook.FullName;
+
+                // Prefer a shown pane as the source; with several windows the shown one is what the user sees
+                PaneEntry source = null;
                 foreach (Excel.Window window in workbook.Windows)
                 {
                     PaneEntry entry = FindPane(window);
-                    if (entry != null && entry.Pane.Visible)
-                    {
-                        SaveTrackedPane(workbook, entry.Pane);
-                        break;
-                    }
+                    if (entry == null || string.Equals(entry.RecordedPath, path, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    entry.RecordedPath = path;
+                    if (source == null || (!source.Pane.Visible && entry.Pane.Visible)) source = entry;
+                }
+                if (source == null) return;
+
+                if (source.Pane.Visible)
+                {
+                    WriteEntryFromPane(path, source);
+                    SaveDefaults(source.RecordedDock, source.RecordedWidth);
+                }
+                else
+                {
+                    WriteEntry(path, source.Pane.DockPosition, PaneWidth(source.Pane), false);
                 }
             }
             catch { /* Nothing to record */ }
@@ -322,7 +339,7 @@ namespace SheetNavigator
 
         /// <summary>
         /// Shows or hides a window's pane as a user action. Called by the Ribbon button with the
-        /// state the button now shows. Tracking is updated by <see cref="MyCustomTaskPane_VisibleChanged"/>.
+        /// state the button now shows. The file's entry is updated by <see cref="MyCustomTaskPane_VisibleChanged"/>.
         /// </summary>
         public void SetSidebarVisible(Excel.Window window, bool visible)
         {
@@ -340,8 +357,9 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// The first time a window is seen, shows its pane on the saved side at the saved width if the
-        /// workbook is tracked. After that the pane keeps whatever state the user left it in. Never writes settings.
+        /// The first time a window is seen, shows its pane if the workbook's entry says visible; the
+        /// pane is created from the entry's dock position and width. After that the pane keeps whatever
+        /// state the user left it in. Never writes settings.
         /// </summary>
         private void RestoreSidebar(Excel.Workbook workbook, Excel.Window window)
         {
@@ -351,30 +369,20 @@ namespace SheetNavigator
             {
                 if (FindPane(window) != null) return;
                 if (!HasPath(workbook)) return;
-                if (!TryGetTrackedPane(workbook.FullName, out Office.MsoCTPDockPosition savedSide, out int savedWidth)) return;
+                if (!TryGetEntry(workbook.FullName, out _, out _, out bool visible) || !visible) return;
 
                 PaneEntry entry = GetOrCreatePane(window);
-                isProgrammaticPaneChange = true;
-                try
-                {
-                    // Side before width: the pane API expects the dock position to be set first
-                    entry.Pane.DockPosition = savedSide;
-                    entry.Pane.Width = savedWidth;
-                }
-                finally
-                {
-                    isProgrammaticPaneChange = false;
-                }
                 entry.Control.RefreshWorksheets(workbook);
                 SetPaneVisibleSilently(entry.Pane, true);
-                Diagnostics.Write($"Restored pane for {workbook.Name} (window {entry.Hwnd}, {DockPositionName(savedSide)}, width {savedWidth})");
+                Diagnostics.Write($"Restored pane for {workbook.Name} (window {entry.Hwnd}, {DockPositionName(entry.RecordedDock)}, width {entry.RecordedWidth})");
             }
             catch (Exception ex) { Diagnostics.Write("RestoreSidebar failed: " + ex); }
         }
 
         /// <summary>
-        /// Syncs the Ribbon button, then records user actions: showing the pane tracks the workbook
-        /// at the current side and width, hiding it untracks the workbook. Changes made by the add-in itself are ignored.
+        /// Syncs the Ribbon button, then records user actions: showing the pane marks the file's entry
+        /// visible, adding one from the pane if the file has none; hiding it marks the entry hidden.
+        /// A workbook without a path has no entry. Changes made by the add-in itself are ignored.
         /// </summary>
         private void MyCustomTaskPane_VisibleChanged(object sender, EventArgs e)
         {
@@ -390,10 +398,16 @@ namespace SheetNavigator
                 Excel.Workbook workbook = entry.Control.Workbook ?? this.Application.ActiveWorkbook;
                 if (workbook == null) return;
 
+                string path = HasPath(workbook) ? workbook.FullName : null;
+
                 if (pane.Visible)
                 {
                     Diagnostics.Write($"User showed pane for {workbook.Name} (window {entry.Hwnd})");
-                    SaveTrackedPane(workbook, pane);
+                    if (path != null)
+                    {
+                        if (HasEntry(path)) SetEntryVisible(path, true);
+                        else WriteEntryFromPane(path, entry);
+                    }
                     entry.Control.RefreshWorksheets(workbook);
                 }
                 else if (!IsWindowOpen(entry.Hwnd))
@@ -404,27 +418,26 @@ namespace SheetNavigator
                 else
                 {
                     Diagnostics.Write($"User hid pane for {workbook.Name} (window {entry.Hwnd})");
-                    Untrack(workbook);
+                    if (path != null && HasEntry(path)) SetEntryVisible(path, false);
                 }
             }
             catch (Exception ex)
             {
                 Diagnostics.Write("VisibleChanged failed: " + ex);
-                MessageBox.Show($"Could not update tracking preferences.\n\nDetails: {ex.Message}",
+                MessageBox.Show($"Could not save the pane settings.\n\nDetails: {ex.Message}",
                                 "Save Failure", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
         /// <summary>
         /// Restarts the save delay on every resize, so a drag is written once when it ends.
-        /// A floating pane is never saved.
         /// </summary>
         private void SheetNavigatorUI_Resize(object sender, EventArgs e)
         {
             try
             {
                 PaneEntry entry = FindEntry(sender as SheetNavigatorControl);
-                if (entry == null || entry.IsClosing || !IsAlive(entry) || !entry.Pane.Visible || !IsDockedOnSide(entry.Pane)) return;
+                if (entry == null || entry.IsClosing || !IsAlive(entry) || !entry.Pane.Visible) return;
 
                 pendingResizeEntry = entry;
                 resizeSaveTimer.Stop();
@@ -434,7 +447,7 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Saves the resized pane's width once resizing has settled.
+        /// Records the resized pane once resizing has settled.
         /// </summary>
         private void ResizeSaveTimer_Tick(object sender, EventArgs e)
         {
@@ -444,17 +457,16 @@ namespace SheetNavigator
 
                 PaneEntry entry = pendingResizeEntry;
                 pendingResizeEntry = null;
-                if (entry == null || entry.IsClosing || !IsAlive(entry) || !entry.Pane.Visible || !IsDockedOnSide(entry.Pane)) return;
+                if (entry == null || entry.IsClosing || !IsAlive(entry) || !entry.Pane.Visible) return;
 
-                Excel.Workbook workbook = entry.Control.Workbook;
-                if (workbook != null) SaveTrackedPane(workbook, entry.Pane);
+                RecordPaneChange(entry);
             }
             catch { /* Excel is busy */ }
         }
 
         /// <summary>
-        /// Saves the pane's new side when the user docks it left or right. Floating is not saved,
-        /// so the pane comes back docked on its last saved side.
+        /// Records the pane when the user docks it left or right or floats it. Floating fires as the
+        /// pane detaches; Excel may change the width at the same time.
         /// </summary>
         private void MyCustomTaskPane_DockPositionChanged(object sender, EventArgs e)
         {
@@ -463,12 +475,33 @@ namespace SheetNavigator
                 if (isProgrammaticPaneChange || !(sender is CustomTaskPane pane)) return;
 
                 PaneEntry entry = FindEntry(pane);
-                if (entry == null || entry.IsClosing || !IsAlive(entry) || !pane.Visible || !IsDockedOnSide(pane)) return;
+                if (entry == null || entry.IsClosing || !IsAlive(entry) || !pane.Visible) return;
 
-                Excel.Workbook workbook = entry.Control.Workbook;
-                if (workbook != null) SaveTrackedPane(workbook, pane);
+                RecordPaneChange(entry);
             }
             catch (Exception ex) { Diagnostics.Write("DockPositionChanged failed: " + ex); }
+        }
+
+        /// <summary>
+        /// After the user docks, floats or resizes a pane: writes its dock position and width to the
+        /// file's entry if the file has one, and to the defaults. A layout event that changed nothing
+        /// since the last record is ignored, and so is a pane docked top or bottom.
+        /// </summary>
+        private void RecordPaneChange(PaneEntry entry)
+        {
+            Office.MsoCTPDockPosition dock = entry.Pane.DockPosition;
+            int width = PaneWidth(entry.Pane);
+            if (dock == entry.RecordedDock && width == entry.RecordedWidth) return;
+
+            // Top and bottom are only reachable if Excel rejected the dock restriction; they have no saved form
+            if (dock == Office.MsoCTPDockPosition.msoCTPDockPositionTop || dock == Office.MsoCTPDockPosition.msoCTPDockPositionBottom) return;
+
+            entry.RecordedDock = dock;
+            entry.RecordedWidth = width;
+
+            Excel.Workbook workbook = entry.Control.Workbook;
+            if (HasPath(workbook) && HasEntry(workbook.FullName)) WriteEntry(workbook.FullName, dock, width, true);
+            SaveDefaults(dock, width);
         }
 
         /// <summary>
@@ -570,13 +603,19 @@ namespace SheetNavigator
                 Workbook = window.Parent as Excel.Workbook
             };
 
+            // A file with an entry gets its pane where the entry says; any other pane starts at the defaults
+            Office.MsoCTPDockPosition dock = DefaultDockPosition;
+            int width = DefaultWidth;
+            if (HasPath(control.Workbook)) TryGetEntry(control.Workbook.FullName, out dock, out width, out _);
+
             CustomTaskPane pane = this.CustomTaskPanes.Add(control, "Worksheets", window);
             try
             {
-                pane.DockPosition = DefaultDockPosition;
-                pane.Width = DefaultWidth;
+                // Dock position before width: the pane API expects that order
+                pane.DockPosition = dock;
+                pane.Width = width;
 
-                // Width is meaningless when docked top or bottom, so keep the pane on a side. Excel's
+                // Width is meaningless when docked top or bottom, so keep the pane on a side or floating. Excel's
                 // "NoHorizontal" is the restriction compatible with a side-docked pane, despite its name.
                 // Optional: a rejected restriction must never stop the pane from working.
                 try { pane.DockPositionRestrict = Office.MsoCTPDockPositionRestrict.msoCTPDockPositionRestrictNoHorizontal; }
@@ -593,7 +632,12 @@ namespace SheetNavigator
                 throw;
             }
 
-            PaneEntry entry = new PaneEntry(hwnd, pane, control);
+            PaneEntry entry = new PaneEntry(hwnd, pane, control)
+            {
+                RecordedPath = HasPath(control.Workbook) ? control.Workbook.FullName : null,
+                RecordedDock = pane.DockPosition,
+                RecordedWidth = PaneWidth(pane)
+            };
             panes[hwnd] = entry;
             Diagnostics.Write($"Created pane for {control.Workbook?.Name} (window {hwnd})");
             return entry;
@@ -679,25 +723,28 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// True while the pane is docked left or right, the only states that are saved.
+        /// The pane's width, within the saved range.
         /// </summary>
-        private static bool IsDockedOnSide(CustomTaskPane pane)
+        private int PaneWidth(CustomTaskPane pane)
         {
-            Office.MsoCTPDockPosition position = pane.DockPosition;
-            return position == Office.MsoCTPDockPosition.msoCTPDockPositionLeft
-                || position == Office.MsoCTPDockPosition.msoCTPDockPositionRight;
+            return ClampPaneWidth(pane.Width, DefaultWidth);
         }
 
         /// <summary>
-        /// The side as written in settings: "Left" or "Right".
+        /// The dock position as written in settings: "Left", "Right" or "Floating".
         /// </summary>
-        private static string DockPositionName(Office.MsoCTPDockPosition side)
+        private static string DockPositionName(Office.MsoCTPDockPosition dock)
         {
-            return side == Office.MsoCTPDockPosition.msoCTPDockPositionRight ? "Right" : "Left";
+            switch (dock)
+            {
+                case Office.MsoCTPDockPosition.msoCTPDockPositionRight: return "Right";
+                case Office.MsoCTPDockPosition.msoCTPDockPositionFloating: return "Floating";
+                default: return "Left";
+            }
         }
 
         /// <summary>
-        /// Reads a saved side; anything but "Left" or "Right" (a garbage value) is the fallback.
+        /// Reads a saved dock position; anything but "Left", "Right" or "Floating" (a garbage value) is the fallback.
         /// </summary>
         private static Office.MsoCTPDockPosition SavedDockPosition(string value, Office.MsoCTPDockPosition fallback)
         {
@@ -709,64 +756,43 @@ namespace SheetNavigator
             {
                 return Office.MsoCTPDockPosition.msoCTPDockPositionLeft;
             }
+            if (string.Equals(value, "Floating", StringComparison.OrdinalIgnoreCase))
+            {
+                return Office.MsoCTPDockPosition.msoCTPDockPositionFloating;
+            }
             return fallback;
         }
 
         /// <summary>
-        /// Records a pane's side and width for its workbook, replacing any older entry, and makes a
-        /// docked pane's side and width the defaults for new panes. A floating pane keeps what is already
-        /// saved (or the defaults), so only docked state is ever written. Skips unsaved workbooks and entries already on file.
+        /// True if the file has an entry, whatever it says.
         /// </summary>
-        private void SaveTrackedPane(Excel.Workbook workbook, CustomTaskPane pane)
+        private bool HasEntry(string path)
         {
-            if (!HasPath(workbook)) return;
-
-            bool docked = IsDockedOnSide(pane);
-            if (docked) SaveDefaults(pane.DockPosition, ClampPaneWidth(pane.Width, DefaultWidth));
-
-            string path = workbook.FullName;
-            bool tracked = TryGetTrackedPane(path, out Office.MsoCTPDockPosition savedSide, out int savedWidth);
-
-            Office.MsoCTPDockPosition side = docked ? pane.DockPosition : savedSide;
-            int width = docked ? ClampPaneWidth(pane.Width, DefaultWidth) : savedWidth;
-            if (tracked && savedSide == side && savedWidth == width) return;
-
-            RemoveTrackedEntries(path);
-            TrackedFiles.Add($"{path}|{DockPositionName(side)}|{width}");
-            SaveSettings();
-            Diagnostics.Write($"Tracked {path} at {DockPositionName(side)}, width {width}");
-        }
-
-        /// <summary>
-        /// Forgets a workbook so its pane stays hidden next time.
-        /// </summary>
-        private void Untrack(Excel.Workbook workbook)
-        {
-            if (!HasPath(workbook)) return;
-
-            if (RemoveTrackedEntries(workbook.FullName) > 0)
+            foreach (string entry in FileEntries)
             {
-                SaveSettings();
-                Diagnostics.Write($"Untracked {workbook.FullName}");
+                if (IsEntryForPath(entry, path)) return true;
             }
+            return false;
         }
 
         /// <summary>
-        /// Looks up the saved side and width for a workbook path. Returns false if the path is not
-        /// tracked. A value that cannot be read falls back to its default.
+        /// Reads a file's entry. Returns false if the file has none. A value that cannot be read falls
+        /// back to its default: the default dock position, the default width, hidden.
         /// </summary>
-        private bool TryGetTrackedPane(string path, out Office.MsoCTPDockPosition side, out int width)
+        private bool TryGetEntry(string path, out Office.MsoCTPDockPosition dock, out int width, out bool visible)
         {
-            side = DefaultDockPosition;
+            dock = DefaultDockPosition;
             width = DefaultWidth;
+            visible = false;
 
-            foreach (string entry in TrackedFiles)
+            foreach (string entry in FileEntries)
             {
                 if (!IsEntryForPath(entry, path)) continue;
 
                 string[] values = entry.Substring(path.Length + 1).Split('|');
-                if (values.Length > 0) side = SavedDockPosition(values[0], side);
+                if (values.Length > 0) dock = SavedDockPosition(values[0], dock);
                 if (values.Length > 1 && int.TryParse(values[1], out int parsedWidth)) width = ClampPaneWidth(parsedWidth, width);
+                if (values.Length > 2 && bool.TryParse(values[2], out bool parsedVisible)) visible = parsedVisible;
                 return true;
             }
 
@@ -774,17 +800,49 @@ namespace SheetNavigator
         }
 
         /// <summary>
+        /// Writes a file's entry, replacing any older one. Entries are never removed.
+        /// </summary>
+        private void WriteEntry(string path, Office.MsoCTPDockPosition dock, int width, bool visible)
+        {
+            RemoveEntries(path);
+            FileEntries.Add($"{path}|{DockPositionName(dock)}|{width}|{visible}");
+            SaveSettings();
+            Diagnostics.Write($"Entry for {path}: {DockPositionName(dock)}, width {width}, visible {visible}");
+        }
+
+        /// <summary>
+        /// Writes the pane's dock position and width as the file's entry, marked visible, and remembers
+        /// them on the pane so a later layout event that changed nothing is not written again.
+        /// </summary>
+        private void WriteEntryFromPane(string path, PaneEntry entry)
+        {
+            entry.RecordedPath = path;
+            entry.RecordedDock = entry.Pane.DockPosition;
+            entry.RecordedWidth = PaneWidth(entry.Pane);
+            WriteEntry(path, entry.RecordedDock, entry.RecordedWidth, true);
+        }
+
+        /// <summary>
+        /// Marks a file's entry visible or hidden; its dock position and width stay as they are.
+        /// </summary>
+        private void SetEntryVisible(string path, bool visible)
+        {
+            if (!TryGetEntry(path, out Office.MsoCTPDockPosition dock, out int width, out _)) return;
+            WriteEntry(path, dock, width, visible);
+        }
+
+        /// <summary>
         /// Removes every entry for a workbook path and returns how many were removed.
         /// </summary>
-        private int RemoveTrackedEntries(string path)
+        private int RemoveEntries(string path)
         {
             int removed = 0;
-            StringCollection tracked = TrackedFiles;
-            for (int i = tracked.Count - 1; i >= 0; i--)
+            StringCollection entries = FileEntries;
+            for (int i = entries.Count - 1; i >= 0; i--)
             {
-                if (IsEntryForPath(tracked[i], path))
+                if (IsEntryForPath(entries[i], path))
                 {
-                    tracked.RemoveAt(i);
+                    entries.RemoveAt(i);
                     removed++;
                 }
             }
@@ -836,6 +894,23 @@ namespace SheetNavigator
             /// Set while the workbook is closing, so a hide raised by the teardown is not treated as a user action.
             /// </summary>
             public bool IsClosing { get; set; }
+
+            /// <summary>
+            /// The workbook path this pane's entry was last written under (the workbook's path at
+            /// creation, null for an unsaved workbook). A save under another path is a first save or Save As.
+            /// </summary>
+            public string RecordedPath { get; set; }
+
+            /// <summary>
+            /// The dock position last recorded for this pane (set at creation, updated on every
+            /// write), so a layout event that changed nothing is not written again.
+            /// </summary>
+            public Office.MsoCTPDockPosition RecordedDock { get; set; }
+
+            /// <summary>
+            /// The width last recorded for this pane; see <see cref="RecordedDock"/>.
+            /// </summary>
+            public int RecordedWidth { get; set; }
 
             public PaneEntry(int hwnd, CustomTaskPane pane, SheetNavigatorControl control)
             {
