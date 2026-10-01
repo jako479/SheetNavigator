@@ -14,5 +14,8 @@
     <Setting Name="DefaultWidth" Type="System.Int32" Scope="User">
       <Value Profile="(Default)">150</Value>
     </Setting>
+    <Setting Name="DefaultHeight" Type="System.Int32" Scope="User">
+      <Value Profile="(Default)">400</Value>
+    </Setting>
   </Settings>
 </SettingsFile>

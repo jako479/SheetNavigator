@@ -13,7 +13,8 @@ namespace SheetNavigator
     /// <summary>
     /// Excel add-in that shows a "Worksheets" task pane listing the sheets of a workbook.
     /// Each Excel window gets its own pane. Each workbook file keeps an entry in the user's settings
-    /// saying whether its pane is shown, where it is docked and how wide it is. See DESIGN.md.
+    /// saying whether its pane is shown, where it is docked, how wide it is and, while floating, how
+    /// tall. See DESIGN.md.
     /// </summary>
     public partial class ThisAddIn
     {
@@ -22,6 +23,12 @@ namespace SheetNavigator
 
         /// <summary>Pane width in points used when the saved default width cannot be read. Points already scale with DPI.</summary>
         private const int FallbackWidth = 150;
+
+        /// <summary>
+        /// Floating pane height in points used when the saved default height cannot be read. Only a
+        /// floating pane has a height of its own; a docked pane is stretched to the window.
+        /// </summary>
+        private const int FallbackHeight = 400;
 
         /// <summary>
         /// Ceiling for saved widths, on both save and load, to reject a garbage value in the settings file.
@@ -33,7 +40,7 @@ namespace SheetNavigator
         private readonly Dictionary<int, PaneEntry> panes = new Dictionary<int, PaneEntry>();
         private Ribbon ribbon;
 
-        /// <summary>Delays the width save until the user has stopped dragging the pane border.</summary>
+        /// <summary>Delays the save until the user has stopped dragging the pane border.</summary>
         private readonly Timer resizeSaveTimer = new Timer { Interval = 500 };
         private PaneEntry pendingResizeEntry;
 
@@ -63,7 +70,7 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Saved "path|dock|width|visible" entries, one per workbook file. Created on first use.
+        /// Saved "path|dock|width|height|visible" entries, one per workbook file. Created on first use.
         /// </summary>
         private StringCollection FileEntries
         {
@@ -105,14 +112,27 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Makes a pane's dock position and width the defaults for new panes.
+        /// The floating height the user last used. New panes that start floating, and workbooks whose
+        /// entry's height cannot be read, open at this height.
         /// </summary>
-        private void SaveDefaults(Office.MsoCTPDockPosition dock, int width)
+        private int DefaultHeight
+        {
+            get
+            {
+                return PositiveHeight(ReadSetting(() => Properties.Settings.Default.DefaultHeight), FallbackHeight);
+            }
+        }
+
+        /// <summary>
+        /// Makes a pane's dock position, width and floating height the defaults for new panes.
+        /// </summary>
+        private void SaveDefaults(Office.MsoCTPDockPosition dock, int width, int height)
         {
             Properties.Settings.Default.DefaultDockPosition = DockPositionName(dock);
             Properties.Settings.Default.DefaultWidth = width;
+            Properties.Settings.Default.DefaultHeight = height;
             SaveSettings();
-            Diagnostics.Write($"Defaults are now {DockPositionName(dock)}, width {width}");
+            Diagnostics.Write($"Defaults are now {DockPositionName(dock)}, width {width}, height {height}");
         }
 
         /// <summary>
@@ -293,11 +313,11 @@ namespace SheetNavigator
                 if (source.Pane.Visible)
                 {
                     WriteEntryFromPane(path, source);
-                    SaveDefaults(source.RecordedDock, source.RecordedWidth);
+                    SaveDefaults(source.RecordedDock, source.RecordedWidth, source.RecordedHeight);
                 }
                 else
                 {
-                    WriteEntry(path, source.Pane.DockPosition, PaneWidth(source.Pane), false);
+                    WriteEntry(path, source.Pane.DockPosition, PaneWidth(source.Pane), PaneHeight(source.Pane, source.RecordedHeight), false);
                 }
             }
             catch { /* Nothing to record */ }
@@ -356,7 +376,7 @@ namespace SheetNavigator
 
         /// <summary>
         /// The first time a window is seen, shows its pane if the workbook's entry says visible; the
-        /// pane is created from the entry's dock position and width. After that the pane keeps whatever
+        /// pane is created from the entry's dock position and size. After that the pane keeps whatever
         /// state the user left it in. Never writes settings.
         /// </summary>
         private void RestoreSidebar(Excel.Workbook workbook, Excel.Window window)
@@ -367,12 +387,12 @@ namespace SheetNavigator
             {
                 if (FindPane(window) != null) return;
                 if (!HasPath(workbook)) return;
-                if (!TryGetEntry(workbook.FullName, out _, out _, out bool visible) || !visible) return;
+                if (!TryGetEntry(workbook.FullName, out _, out _, out _, out bool visible) || !visible) return;
 
                 PaneEntry entry = GetOrCreatePane(window);
                 entry.Control.RefreshWorksheets(workbook);
                 SetPaneVisibleSilently(entry.Pane, true);
-                Diagnostics.Write($"Restored pane for {workbook.Name} (window {entry.Hwnd}, {DockPositionName(entry.RecordedDock)}, width {entry.RecordedWidth})");
+                Diagnostics.Write($"Restored pane for {workbook.Name} (window {entry.Hwnd}, {DockPositionName(entry.RecordedDock)}, width {entry.RecordedWidth}, height {entry.RecordedHeight})");
             }
             catch (Exception ex) { Diagnostics.Write("RestoreSidebar failed: " + ex); }
         }
@@ -463,8 +483,10 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Records the pane when the user docks it left or right or floats it. Floating fires as the
-        /// pane detaches; Excel may change the width at the same time.
+        /// Records the pane when the user docks it left or right or floats it. A pane that just floated
+        /// is given the recorded height first, since only a floating pane has a height of its own; Excel
+        /// rejects property sets inside this handler, so that is queued to run right after it returns.
+        /// Floating fires as the pane detaches; Excel may change the width at the same time.
         /// </summary>
         private void MyCustomTaskPane_DockPositionChanged(object sender, EventArgs e)
         {
@@ -475,31 +497,57 @@ namespace SheetNavigator
                 PaneEntry entry = FindEntry(pane);
                 if (entry == null || entry.IsClosing || !IsAlive(entry) || !pane.Visible) return;
 
+                if (pane.DockPosition == Office.MsoCTPDockPosition.msoCTPDockPositionFloating)
+                {
+                    entry.Control.BeginInvoke(new Action(() => ApplyFloatingHeight(entry)));
+                    return;
+                }
+
                 RecordPaneChange(entry);
             }
             catch (Exception ex) { Diagnostics.Write("DockPositionChanged failed: " + ex); }
         }
 
         /// <summary>
-        /// After the user docks, floats or resizes a pane: writes its dock position and width to the
-        /// file's entry if the file has one, and to the defaults. A layout event that changed nothing
-        /// since the last record is ignored, and so is a pane docked top or bottom.
+        /// Runs right after the float event's handler returns: gives the floating pane its recorded
+        /// height, then records the pane.
+        /// </summary>
+        private void ApplyFloatingHeight(PaneEntry entry)
+        {
+            try
+            {
+                if (entry.IsClosing || !IsAlive(entry) || !entry.Pane.Visible) return;
+                if (entry.Pane.DockPosition != Office.MsoCTPDockPosition.msoCTPDockPositionFloating) return;
+
+                entry.Pane.Height = entry.RecordedHeight;
+                RecordPaneChange(entry);
+            }
+            catch (Exception ex) { Diagnostics.Write("Floating height failed: " + ex); }
+        }
+
+        /// <summary>
+        /// After the user docks, floats or resizes a pane: writes its dock position, width and, while
+        /// floating, height to the file's entry if the file has one, and to the defaults. A layout event
+        /// that changed nothing since the last record is ignored, and so is a pane docked top or bottom.
+        /// A docked pane's height is Excel's, so the recorded height stays.
         /// </summary>
         private void RecordPaneChange(PaneEntry entry)
         {
             Office.MsoCTPDockPosition dock = entry.Pane.DockPosition;
             int width = PaneWidth(entry.Pane);
-            if (dock == entry.RecordedDock && width == entry.RecordedWidth) return;
+            int height = PaneHeight(entry.Pane, entry.RecordedHeight);
+            if (dock == entry.RecordedDock && width == entry.RecordedWidth && height == entry.RecordedHeight) return;
 
             // Top and bottom are only reachable if Excel rejected the dock restriction; they have no saved form
             if (dock == Office.MsoCTPDockPosition.msoCTPDockPositionTop || dock == Office.MsoCTPDockPosition.msoCTPDockPositionBottom) return;
 
             entry.RecordedDock = dock;
             entry.RecordedWidth = width;
+            entry.RecordedHeight = height;
 
             Excel.Workbook workbook = entry.Control.Workbook;
-            if (HasPath(workbook) && HasEntry(workbook.FullName)) WriteEntry(workbook.FullName, dock, width, true);
-            SaveDefaults(dock, width);
+            if (HasPath(workbook) && HasEntry(workbook.FullName)) WriteEntry(workbook.FullName, dock, width, height, true);
+            SaveDefaults(dock, width, height);
         }
 
         /// <summary>
@@ -604,14 +652,16 @@ namespace SheetNavigator
             // A file with an entry gets its pane where the entry says; any other pane starts at the defaults
             Office.MsoCTPDockPosition dock = DefaultDockPosition;
             int width = DefaultWidth;
-            if (HasPath(control.Workbook)) TryGetEntry(control.Workbook.FullName, out dock, out width, out _);
+            int height = DefaultHeight;
+            if (HasPath(control.Workbook)) TryGetEntry(control.Workbook.FullName, out dock, out width, out height, out _);
 
             CustomTaskPane pane = this.CustomTaskPanes.Add(control, "Worksheets", window);
             try
             {
-                // Dock position before width: the pane API expects that order
+                // Dock position before size: the pane API expects that order. Only a floating pane takes a height.
                 pane.DockPosition = dock;
                 pane.Width = width;
+                if (dock == Office.MsoCTPDockPosition.msoCTPDockPositionFloating) pane.Height = height;
 
                 // Width is meaningless when docked top or bottom, so keep the pane on a side or floating. Excel's
                 // "NoHorizontal" is the restriction compatible with a side-docked pane, despite its name.
@@ -634,7 +684,8 @@ namespace SheetNavigator
             {
                 RecordedPath = HasPath(control.Workbook) ? control.Workbook.FullName : null,
                 RecordedDock = pane.DockPosition,
-                RecordedWidth = PaneWidth(pane)
+                RecordedWidth = PaneWidth(pane),
+                RecordedHeight = PaneHeight(pane, height)
             };
             panes[hwnd] = entry;
             Diagnostics.Write($"Created pane for {control.Workbook?.Name} (window {hwnd})");
@@ -729,6 +780,25 @@ namespace SheetNavigator
         }
 
         /// <summary>
+        /// A height of zero or less (a garbage value) is the fallback. There is no ceiling: Excel keeps
+        /// a floating pane on screen.
+        /// </summary>
+        private static int PositiveHeight(int height, int fallback)
+        {
+            return height <= 0 ? fallback : height;
+        }
+
+        /// <summary>
+        /// The pane's height while floating; a docked pane's height is Excel's, so the fallback stands.
+        /// </summary>
+        private static int PaneHeight(CustomTaskPane pane, int fallback)
+        {
+            return pane.DockPosition == Office.MsoCTPDockPosition.msoCTPDockPositionFloating
+                ? PositiveHeight(pane.Height, fallback)
+                : fallback;
+        }
+
+        /// <summary>
         /// The dock position as written in settings: "Left", "Right" or "Floating".
         /// </summary>
         private static string DockPositionName(Office.MsoCTPDockPosition dock)
@@ -775,12 +845,13 @@ namespace SheetNavigator
 
         /// <summary>
         /// Reads a file's entry. Returns false if the file has none. A value that cannot be read falls
-        /// back to its default: the default dock position, the default width, hidden.
+        /// back to its default: the default dock position, width and height, hidden.
         /// </summary>
-        private bool TryGetEntry(string path, out Office.MsoCTPDockPosition dock, out int width, out bool visible)
+        private bool TryGetEntry(string path, out Office.MsoCTPDockPosition dock, out int width, out int height, out bool visible)
         {
             dock = DefaultDockPosition;
             width = DefaultWidth;
+            height = DefaultHeight;
             visible = false;
 
             foreach (string entry in FileEntries)
@@ -790,7 +861,8 @@ namespace SheetNavigator
                 string[] values = entry.Substring(path.Length + 1).Split('|');
                 if (values.Length > 0) dock = SavedDockPosition(values[0], dock);
                 if (values.Length > 1 && int.TryParse(values[1], out int parsedWidth)) width = ClampPaneWidth(parsedWidth, width);
-                if (values.Length > 2 && bool.TryParse(values[2], out bool parsedVisible)) visible = parsedVisible;
+                if (values.Length > 2 && int.TryParse(values[2], out int parsedHeight)) height = PositiveHeight(parsedHeight, height);
+                if (values.Length > 3 && bool.TryParse(values[3], out bool parsedVisible)) visible = parsedVisible;
                 return true;
             }
 
@@ -800,33 +872,34 @@ namespace SheetNavigator
         /// <summary>
         /// Writes a file's entry, replacing any older one. Entries are never removed.
         /// </summary>
-        private void WriteEntry(string path, Office.MsoCTPDockPosition dock, int width, bool visible)
+        private void WriteEntry(string path, Office.MsoCTPDockPosition dock, int width, int height, bool visible)
         {
             RemoveEntries(path);
-            FileEntries.Add($"{path}|{DockPositionName(dock)}|{width}|{visible}");
+            FileEntries.Add($"{path}|{DockPositionName(dock)}|{width}|{height}|{visible}");
             SaveSettings();
-            Diagnostics.Write($"Entry for {path}: {DockPositionName(dock)}, width {width}, visible {visible}");
+            Diagnostics.Write($"Entry for {path}: {DockPositionName(dock)}, width {width}, height {height}, visible {visible}");
         }
 
         /// <summary>
-        /// Writes the pane's dock position and width as the file's entry, marked visible, and remembers
-        /// them on the pane so a later layout event that changed nothing is not written again.
+        /// Writes the pane's dock position, width and floating height as the file's entry, marked visible,
+        /// and remembers them on the pane so a later layout event that changed nothing is not written again.
         /// </summary>
         private void WriteEntryFromPane(string path, PaneEntry entry)
         {
             entry.RecordedPath = path;
             entry.RecordedDock = entry.Pane.DockPosition;
             entry.RecordedWidth = PaneWidth(entry.Pane);
-            WriteEntry(path, entry.RecordedDock, entry.RecordedWidth, true);
+            entry.RecordedHeight = PaneHeight(entry.Pane, entry.RecordedHeight);
+            WriteEntry(path, entry.RecordedDock, entry.RecordedWidth, entry.RecordedHeight, true);
         }
 
         /// <summary>
-        /// Marks a file's entry visible or hidden; its dock position and width stay as they are.
+        /// Marks a file's entry visible or hidden; its dock position, width and height stay as they are.
         /// </summary>
         private void SetEntryVisible(string path, bool visible)
         {
-            if (!TryGetEntry(path, out Office.MsoCTPDockPosition dock, out int width, out _)) return;
-            WriteEntry(path, dock, width, visible);
+            if (!TryGetEntry(path, out Office.MsoCTPDockPosition dock, out int width, out int height, out _)) return;
+            WriteEntry(path, dock, width, height, visible);
         }
 
         /// <summary>
@@ -909,6 +982,12 @@ namespace SheetNavigator
             /// The width last recorded for this pane; see <see cref="RecordedDock"/>.
             /// </summary>
             public int RecordedWidth { get; set; }
+
+            /// <summary>
+            /// The floating height last recorded for this pane; see <see cref="RecordedDock"/>. A docked
+            /// pane's height is Excel's, so this is always the last floating height.
+            /// </summary>
+            public int RecordedHeight { get; set; }
 
             public PaneEntry(int hwnd, CustomTaskPane pane, SheetNavigatorControl control)
             {
