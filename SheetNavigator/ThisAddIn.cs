@@ -105,12 +105,10 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Makes a pane's dock position and width the defaults for new panes, if they are not already.
+        /// Makes a pane's dock position and width the defaults for new panes.
         /// </summary>
         private void SaveDefaults(Office.MsoCTPDockPosition dock, int width)
         {
-            if (DefaultDockPosition == dock && DefaultWidth == width) return;
-
             Properties.Settings.Default.DefaultDockPosition = DockPositionName(dock);
             Properties.Settings.Default.DefaultWidth = width;
             SaveSettings();
