@@ -14,14 +14,17 @@ namespace SheetNavigator
         private const long MaxLogBytes = 1024 * 1024;
         private const int KeepBytes = 256 * 1024;
 
-        private static readonly string LogPath = Path.Combine(Path.GetTempPath(), "SheetNavigator.log");
+        private static readonly string logPath = Path.Combine(Path.GetTempPath(), "SheetNavigator.log");
 
+        /// <summary>
+        /// Appends one timestamped line. Swallows every error, since logging must never break the add-in.
+        /// </summary>
         public static void Write(string message)
         {
             try
             {
                 TrimIfLarge();
-                File.AppendAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}{Environment.NewLine}");
+                File.AppendAllText(logPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}{Environment.NewLine}");
             }
             catch { }
         }
@@ -47,13 +50,13 @@ namespace SheetNavigator
         /// </summary>
         private static void TrimIfLarge()
         {
-            FileInfo info = new FileInfo(LogPath);
+            FileInfo info = new FileInfo(logPath);
             if (!info.Exists || info.Length <= MaxLogBytes) return;
 
-            byte[] all = File.ReadAllBytes(LogPath);
+            byte[] all = File.ReadAllBytes(logPath);
             byte[] tail = new byte[KeepBytes];
             Array.Copy(all, all.Length - KeepBytes, tail, 0, KeepBytes);
-            File.WriteAllBytes(LogPath, tail);
+            File.WriteAllBytes(logPath, tail);
         }
     }
 }

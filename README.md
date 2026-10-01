@@ -1,6 +1,6 @@
 # Sheet Navigator
 
-An Excel add-in that adds a **Worksheets** pane listing the sheets in the active workbook. Click a name to jump to that sheet. Excel remembers, per file, whether the pane was open, where it was and how big it was.
+An Excel add-in that adds a **Worksheets** pane listing the sheets in the active workbook. Click a name to jump to that sheet. Sheet Navigator remembers, per file, whether the pane was open, where it was and how big it was.
 
 ## Requirements
 

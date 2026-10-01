@@ -1,8 +1,9 @@
 # Sheet Navigator
 
 Excel VSTO add-in that shows a Worksheets pane for any workbook, one pane per
-Excel window, with the pane's open state and width remembered per file. Source
-in `SheetNavigator/`, solution-level docs at the repo root.
+Excel window, with the pane's open state, dock position, width and floating
+height remembered per file. Source in `SheetNavigator/`, solution-level docs at
+the repo root.
 
 ## Working agreement
 

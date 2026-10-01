@@ -48,6 +48,10 @@ A brand-new workbook has no path and cannot have an entry until it is saved.
 1. File with an entry: mark it hidden.
 2. File without an entry: nothing is written.
 
+The hide is recorded half a second later, and only if the window is still
+open by then: a closing window reports its pane hidden too, sometimes while
+Excel still lists the window, and that is not the user's doing.
+
 **Pane shown** (Ribbon button)
 
 1. File with an entry, window has no pane yet: create the pane with the
@@ -81,7 +85,8 @@ defaults.
 A dock, float or resize event that left the pane exactly as last recorded
 (for example the layout event Excel raises right after a pane is shown)
 writes nothing. A pane docked top or bottom, only possible if Excel rejected
-the add-in's dock restriction, is not recorded. A pane reporting a width or
+the add-in's dock restriction, is never recorded: a layout event ignores it,
+and any other attempt to save it is reported as a failure. A pane reporting a width or
 height of zero or less keeps the saved value. A docked pane's height is
 Excel's and is never written, so the saved height is always the last
 floating height.
@@ -95,6 +100,9 @@ floating height.
    height to the defaults. With several windows, a shown pane is the
    source.
 
+A workbook with no pane (its entry said hidden, so none was ever created)
+passes the old path's entry on to the new path, still hidden.
+
 After a Save As the old path's entry is left alone.
 
 ## When settings are applied and saved
@@ -107,7 +115,8 @@ ever written from the settings back to a pane.
 **Saved from the pane**: dock position and width on every dock, float or
 resize, and height too while the pane is floating. Docking never touches
 the saved height. Hiding the pane only marks the entry hidden, and a
-closing workbook saves nothing.
+closing workbook saves nothing. Each user action saves the settings file
+once, however many values it changed.
 
 ## Workbook and window events
 
@@ -121,7 +130,10 @@ closing workbook saves nothing.
 - **Workbook closing**: its panes are flagged as closing. Excel reports the
   pane as hidden while the window closes; that is ignored, nothing is
   written, so the entry keeps saying visible and the pane comes back next
-  time. The pane objects are dropped once the window is really gone.
+  time. Closing one window of a workbook that has several raises no closing
+  event, so there the half-second delay before a hide is recorded is what
+  tells the teardown from the user. The pane objects are dropped once the
+  window is really gone; working in a window again clears its closing flag.
 - **Workbook saved**: see "Pane events".
 - **Sheet activated**: every pane of the active workbook re-highlights its
   own window's active sheet; the active window's pane also refreshes its
@@ -130,8 +142,9 @@ closing workbook saves nothing.
 
 ## Worksheet list
 
-The list shows the workbook's visible sheets, in tab order. Hidden and very
-hidden sheets are not listed.
+The list shows the workbook's visible worksheets, in tab order. Hidden and
+very hidden sheets are not listed, and neither are chart sheets; while a
+chart sheet is active, nothing is highlighted.
 
 **When it refreshes**
 
@@ -147,5 +160,7 @@ catches sheets that were added, deleted, renamed, moved, hidden or unhidden,
 even though Excel raises no event for a rename or a move. The highlight then
 moves to the window's active sheet.
 
-**Clicking a name** activates that sheet in the pane's own window. Keyboard
-navigation in the list is blocked; Ctrl+PgUp/PgDn already covers it.
+**Clicking a name** activates that sheet in the pane's own window. The jump
+happens when the mouse button is released, so dragging across names jumps
+once, where the drag ends. Keyboard navigation in the list is blocked;
+Ctrl+PgUp/PgDn already covers it.

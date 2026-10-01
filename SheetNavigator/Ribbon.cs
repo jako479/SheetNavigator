@@ -40,7 +40,7 @@ namespace SheetNavigator
         /// </summary>
         public void OnWorksheetsToggle(Office.IRibbonControl control, bool pressed)
         {
-            Globals.ThisAddIn.SetSidebarVisible(WindowOf(control), pressed);
+            Globals.ThisAddIn.SetPaneVisible(WindowOf(control), pressed);
             RefreshToggleState();
         }
 
@@ -49,7 +49,7 @@ namespace SheetNavigator
         /// </summary>
         public bool GetWorksheetsPressed(Office.IRibbonControl control)
         {
-            return Globals.ThisAddIn.IsSidebarVisibleIn(WindowOf(control));
+            return Globals.ThisAddIn.IsPaneVisibleIn(WindowOf(control));
         }
 
         /// <summary>
@@ -76,14 +76,17 @@ namespace SheetNavigator
             catch { /* The Ribbon may be gone while a window closes */ }
         }
 
+        /// <summary>
+        /// Reads an embedded text resource by name, or null if the assembly has none by that name.
+        /// </summary>
         private static string GetResourceText(string resourceName)
         {
-            Assembly asm = Assembly.GetExecutingAssembly();
-            foreach (string name in asm.GetManifestResourceNames())
+            Assembly assembly = Assembly.GetExecutingAssembly();
+            foreach (string name in assembly.GetManifestResourceNames())
             {
                 if (string.Equals(resourceName, name, StringComparison.OrdinalIgnoreCase))
                 {
-                    using (StreamReader reader = new StreamReader(asm.GetManifestResourceStream(name)))
+                    using (StreamReader reader = new StreamReader(assembly.GetManifestResourceStream(name)))
                     {
                         return reader.ReadToEnd();
                     }

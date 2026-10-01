@@ -21,9 +21,9 @@ STEP 3: USE IT
 --------------
 * Open any workbook.
 * On the View tab, in the Navigate group, click "Worksheets" to
-  show or hide the pane. Excel remembers your choice, and the pane's
-  position (left, right or floating) and size, for each workbook
-  file, even while the pane is hidden.
+  show or hide the pane. Sheet Navigator remembers your choice,
+  and the pane's position (left, right or floating) and size, for
+  each workbook file, even while the pane is hidden.
 * A new pane opens where you last had one, at the size you last used
   (right, 150 points wide at first).
 
@@ -32,6 +32,11 @@ REQUIREMENTS
 * Windows with desktop Microsoft Excel 2013 or later.
 * .NET Framework 4.7.2 and the Visual Studio 2010 Tools for Office
   Runtime. The installer adds both if they are missing.
+
+TROUBLESHOOTING
+---------------
+Sheet Navigator writes a short log of pane events and any unexpected
+error to %TEMP%\SheetNavigator.log.
 
 REMOVAL
 -------
