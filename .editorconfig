@@ -6,6 +6,10 @@ end_of_line = crlf
 insert_final_newline = true
 trim_trailing_whitespace = true
 
+# Files Visual Studio writes with a UTF-8 byte order mark.
+[*.{cs,csproj,resx,settings,config,xml}]
+charset = utf-8-bom
+
 [*.md]
 trim_trailing_whitespace = false
 

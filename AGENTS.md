@@ -58,8 +58,8 @@ by this rule.
 
 ## Docs
 
-After a behavior change, read DESIGN.md, ARCHITECTURE.md and any other design
-document end to end and update whatever the change affects.
+After a behavior change, read the project's design documents (DESIGN.md,
+ARCHITECTURE.md or similar) end to end and update whatever the change affects.
 
 Update project meta as appropriate: STATUS.md, CHANGELOG.md, TODO.md, README.md,
 release/README.txt. CHANGELOG and TODO entries are single-line when possible.
