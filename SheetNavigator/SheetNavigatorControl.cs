@@ -49,13 +49,13 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Brings the list in line with the workbook: rebuilds it only if the visible sheet names
-        /// changed (added, removed, renamed, reordered, hidden or unhidden), then highlights the active sheet.
+        /// Brings the list in line with the workbook: rebuilds it only if the visible sheet names changed, then highlights the active sheet.
         /// </summary>
         public void RefreshWorksheets(Excel.Workbook activeWorkbook)
         {
             if (IsDisposed || activeWorkbook == null) return;
 
+            // Comparing names catches sheets added, removed, renamed, reordered, hidden or unhidden
             List<string> names = VisibleSheetNames(activeWorkbook);
             if (!SameAsList(names))
             {
@@ -75,8 +75,7 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Moves the highlight to this window's active sheet. A chart sheet is not in the list, so
-        /// while one is active nothing is highlighted.
+        /// Moves the highlight to this window's active sheet; while a chart sheet is active nothing is highlighted.
         /// </summary>
         public void HighlightActiveSheet()
         {
@@ -99,11 +98,11 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// The names of the workbook's visible worksheets, in tab order. Chart sheets are not
-        /// worksheets, so they are left out.
+        /// The names of the workbook's visible worksheets, in tab order.
         /// </summary>
         private static List<string> VisibleSheetNames(Excel.Workbook workbook)
         {
+            // Chart sheets are not in Worksheets, so they are left out
             List<string> names = new List<string>();
             foreach (Excel.Worksheet worksheet in workbook.Worksheets)
             {
@@ -126,7 +125,7 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Refreshes if Excel will answer, otherwise just re-highlights the active sheet.
+        /// Refreshes if Excel will answer and no macro has screen updating off, otherwise just re-highlights the active sheet.
         /// </summary>
         internal void RefreshQuietly()
         {
@@ -135,7 +134,9 @@ namespace SheetNavigator
                 Excel.Workbook workbook = TargetWorkbook;
                 if (workbook == null) return;
 
-                if (IsExcelEditing(Globals.ThisAddIn.Application))
+                // Walking every sheet during a macro would slow it down; the list catches up once the macro is done
+                Excel.Application app = Globals.ThisAddIn.Application;
+                if (IsExcelEditing(app) || app.ScreenUpdating == false)
                 {
                     HighlightActiveSheet();
                 }
@@ -149,11 +150,12 @@ namespace SheetNavigator
 
         /// <summary>
         /// True while Excel is busy or mid-edit (typing in a cell or a sheet tab name).
-        /// Most Ribbon commands are disabled then, which is the only reliable signal.
         /// </summary>
         private static bool IsExcelEditing(Excel.Application app)
         {
             if (app.Ready == false || app.Interactive == false) return true;
+
+            // Most Ribbon commands are disabled mid-edit, which is the only reliable signal
             return app.CommandBars.GetEnabledMso("FileNewDefault") == false;
         }
 
@@ -187,26 +189,40 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Jumps to the name under the pointer when the left button is released, so a drag across the
-        /// list jumps once, where it ends. A release off the names only puts the highlight back.
+        /// Jumps to the name under the pointer when the left button is released; a release off the
+        /// names only puts the highlight back. Either way focus goes back to the window.
         /// </summary>
         private void WorksheetList_MouseUp(object sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left || IsDisposed) return;
 
+            // The jump waits for the release so a drag across the list jumps once, where it ends.
+            // IndexFromPoint names the nearest item for any point inside the list, blank space below
+            // the names included, so the item's own rectangle decides whether a name was hit.
             int index = this.WorksheetList.IndexFromPoint(e.Location);
-            if (index == ListBox.NoMatches)
-            {
-                HighlightActiveSheet();
-                return;
-            }
+            bool onName = index != ListBox.NoMatches && this.WorksheetList.GetItemRectangle(index).Contains(e.Location);
 
-            JumpTo(this.WorksheetList.Items[index] as string);
+            if (onName) JumpTo(this.WorksheetList.Items[index] as string);
+            else HighlightActiveSheet();
+
+            ActivateWindow();
         }
 
         /// <summary>
-        /// Activates the named sheet in this pane's window. If the jump cannot happen,
-        /// the list is refreshed and the highlight returns to the sheet the window is still on.
+        /// Hands focus back to the pane's window, so Excel's own keys (Ctrl+PgUp/PgDn included) work right after a click on the list.
+        /// </summary>
+        private void ActivateWindow()
+        {
+            try
+            {
+                Window?.Activate();
+            }
+            catch { /* Excel is busy; the next click tries again */ }
+        }
+
+        /// <summary>
+        /// Activates the named sheet in this pane's window; if the jump cannot happen, the list is
+        /// refreshed and the highlight returns to the sheet the window is still on.
         /// </summary>
         private void JumpTo(string sheetName)
         {
@@ -240,7 +256,7 @@ namespace SheetNavigator
             catch (Exception ex)
             {
                 Diagnostics.Write("Jump failed: " + ex);
-                MessageBox.Show($"Could not jump to sheet: {ex.Message}", "Navigation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, $"Could not jump to sheet: {ex.Message}", "Navigation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             finally
             {

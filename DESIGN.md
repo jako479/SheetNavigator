@@ -23,8 +23,12 @@ Everything lives in the user's settings, never in the workbook.
   start floating open at it. Starts at 400.
 - A value that cannot be read falls back to its default: dock to
   DefaultDockPosition, width to DefaultWidth, height to DefaultHeight,
-  visible to `False`. A settings file .NET cannot read at all is deleted and
-  starts over.
+  visible to `False`. A settings file whose XML is corrupt is deleted and
+  starts over; a file that is merely locked or unavailable is kept and the
+  failure is reported.
+- A saved dock, width or height that Excel rejects when the pane is
+  created falls back to the default; if Excel rejects that too, the pane
+  keeps Excel's own value.
 - After an Office update the settings are carried over from the previous
   Excel build's folder.
 
@@ -50,7 +54,11 @@ A brand-new workbook has no path and cannot have an entry until it is saved.
 
 The hide is recorded half a second later, and only if the window is still
 open by then: a closing window reports its pane hidden too, sometimes while
-Excel still lists the window, and that is not the user's doing.
+Excel still lists the window, and that is not the user's doing. While the
+workbook's close is pending (Excel is asking about unsaved changes) the hide
+is re-checked every half second for up to two seconds; a window still open
+by then survived a cancelled close, so the hide is recorded. A hide still
+waiting when the close begins is recorded at once, since it came first.
 
 **Pane shown** (Ribbon button)
 
@@ -65,7 +73,7 @@ Excel still lists the window, and that is not the user's doing.
 4. Existing file without an entry: create the pane as in case 3; add an
    entry, visible.
 
-**Pane docked or floated**
+**Pane docked or floated** (written once it settles, half a second later)
 
 A pane that just floated is given the saved height first. Then:
 
@@ -81,6 +89,10 @@ Docking never touches the saved height.
 Same as docked or floated: the pane's dock position and width, and its
 height if it is floating, go to the entry if the file has one, and to the
 defaults.
+
+A dock, float or resize that arrives while the workbook's close is pending
+waits like a hide does (see "Pane hidden"), and one still waiting when a
+close or Excel shutdown begins is written at once.
 
 A dock, float or resize event that left the pane exactly as last recorded
 (for example the layout event Excel raises right after a pane is shown)
@@ -115,8 +127,8 @@ ever written from the settings back to a pane.
 **Saved from the pane**: dock position and width on every dock, float or
 resize, and height too while the pane is floating. Docking never touches
 the saved height. Hiding the pane only marks the entry hidden, and a
-closing workbook saves nothing. Each user action saves the settings file
-once, however many values it changed.
+closing workbook saves nothing of its own teardown. Each user action saves
+the settings file once, however many values it changed.
 
 ## Workbook and window events
 
@@ -127,18 +139,21 @@ once, however many values it changed.
   entry if the entry is visible; the Ribbon button is refreshed. Activating
   a window also brings back the pane after a cancelled close.
 - **Workbook or window deactivated**: nothing.
-- **Workbook closing**: its panes are flagged as closing. Excel reports the
-  pane as hidden while the window closes; that is ignored, nothing is
-  written, so the entry keeps saying visible and the pane comes back next
-  time. Closing one window of a workbook that has several raises no closing
-  event, so there the half-second delay before a hide is recorded is what
-  tells the teardown from the user. The pane objects are dropped once the
-  window is really gone; working in a window again clears its closing flag.
+- **Workbook closing**: any hide or layout change still waiting for its
+  delay is written first, then its panes are flagged as closing. Excel
+  reports the pane as hidden while the window closes; that is ignored,
+  nothing is written, so the entry keeps saying visible and the pane comes
+  back next time. Closing one window of a workbook that has several raises
+  no closing event, so there the half-second delay before a hide is
+  recorded is what tells the teardown from the user. The pane objects are
+  dropped once the window is really gone; working in a window again, or a
+  change that outlives the two-second re-check, clears its closing flag.
 - **Workbook saved**: see "Pane events".
 - **Sheet activated**: every pane of the active workbook re-highlights its
   own window's active sheet; the active window's pane also refreshes its
-  list.
-- **Excel closes**: timers stop, events unhook, nothing is written.
+  list, unless a macro has screen updating off.
+- **Excel closes**: any hide or layout change still waiting for its delay
+  is written, then timers stop and events unhook; nothing else is written.
 
 ## Worksheet list
 
@@ -150,7 +165,8 @@ chart sheet is active, nothing is highlighted.
 
 - A sheet is activated.
 - Once a second, for every shown pane. If Excel is mid-edit (typing in a
-  cell or a tab name) only the highlight is updated.
+  cell or a tab name), or a macro has screen updating off, only the
+  highlight is updated.
 - The pointer enters the list.
 - The pane is shown or restored.
 - A click on a sheet name could not jump (the sheet was renamed or removed).
@@ -162,5 +178,12 @@ moves to the window's active sheet.
 
 **Clicking a name** activates that sheet in the pane's own window. The jump
 happens when the mouse button is released, so dragging across names jumps
-once, where the drag ends. Keyboard navigation in the list is blocked;
-Ctrl+PgUp/PgDn already covers it.
+once, where the drag ends. A release on the blank space below the names
+only puts the highlight back. Every release hands focus back to the pane's
+window, so Excel's keys work right after a click. Keyboard navigation in
+the list is blocked; Ctrl+PgUp/PgDn already covers it.
+
+## Diagnostics
+
+Errors and unhandled exceptions go to `%TEMP%\SheetNavigator.log`, newest
+256 KB kept once it passes 1 MB. Nothing else is logged.

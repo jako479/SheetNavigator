@@ -4,6 +4,13 @@
 
 ## Decisions
 
+- A change queued while a workbook's close is pending is re-checked every half second for up to two seconds; a window still open by then survived a cancelled close, so the change is the user's and is recorded. A hide or resize still queued when a close or Excel shutdown begins is recorded first, since it happened before the close.
+- Only a settings file .NET cannot parse as XML, under the user's profile, is deleted and reset; a locked or otherwise unavailable file is kept and the failure reported, so a transient error cannot wipe the saved entries.
+- A saved dock position, width or height that Excel rejects falls back to the default, and a rejected default leaves Excel's own, so a bad entry can never stop a file from getting a pane.
+- Every mouse release on the list activates the pane's window, so Excel's own Ctrl+PgUp/PgDn work right after a click; the list itself still swallows keys.
+- The list is not rebuilt while a macro has screen updating off; it catches up on the first tick after the macro restores it.
+- The log holds errors only; per-event lines were dropped before release.
+- A dock or float is recorded through the same half-second delay as a resize, since Excel may still be changing the width when the dock event fires.
 - A hide is recorded half a second after the event and only if the window is still open then: a closing window reports its pane hidden too, sometimes while Excel still lists the window, and closing one window of several raises no closing event at all.
 - Each user action saves the settings file once; entries and defaults are written in memory first.
 - A pane docked top or bottom has no saved form: a layout event ignores it and any other save of it throws, so Excel ignoring the dock restriction shows up as a failure instead of being saved as Left.

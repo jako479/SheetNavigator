@@ -5,6 +5,7 @@ using System.Collections.Specialized;
 using System.Configuration;
 using System.IO;
 using System.Windows.Forms;
+using System.Xml;
 using Excel = Microsoft.Office.Interop.Excel;
 using Office = Microsoft.Office.Core;
 
@@ -36,6 +37,12 @@ namespace SheetNavigator
         /// </summary>
         private const int MaxPaneWidth = 400;
 
+        /// <summary>
+        /// How many half-second checks a pane change waits while its workbook's close is pending. A
+        /// window still open after that many survived a cancelled close, so the change is the user's.
+        /// </summary>
+        private const int ClosingRecheckLimit = 4;
+
         /// <summary>One pane per Excel window, keyed by window handle.</summary>
         private readonly Dictionary<int, PaneEntry> panes = new Dictionary<int, PaneEntry>();
 
@@ -47,14 +54,13 @@ namespace SheetNavigator
 
         private Ribbon ribbon;
 
-        /// <summary>Delays the save until the user has stopped dragging the pane border.</summary>
+        /// <summary>Delays recording a resize, dock or float until the user has stopped dragging.</summary>
         private readonly Timer resizeSaveTimer = new Timer { Interval = 500 };
-        private PaneEntry pendingResizeEntry;
+        private readonly List<PaneEntry> pendingResizeEntries = new List<PaneEntry>();
 
         /// <summary>
-        /// Delays recording a hide until a closing window has had time to go. Such a window reports
-        /// its pane hidden too, sometimes while Excel still lists the window, so a hide is only the
-        /// user's if the window is still there once the delay has passed.
+        /// Delays recording a hide until a closing window has had time to go: such a window reports
+        /// its pane hidden too, sometimes while Excel still lists the window.
         /// </summary>
         private readonly Timer hideSaveTimer = new Timer { Interval = 500 };
         private readonly List<PaneEntry> pendingHideEntries = new List<PaneEntry>();
@@ -151,11 +157,10 @@ namespace SheetNavigator
                 Properties.Settings.Default.DefaultWidth = width;
                 Properties.Settings.Default.DefaultHeight = height;
             });
-            Diagnostics.Write($"Defaults are now {dockName}, width {width}, height {height}");
         }
 
         /// <summary>
-        /// Reads a setting, resetting the settings file first if .NET reports it unreadable.
+        /// Reads a setting, resetting the settings file first if it is corrupt.
         /// </summary>
         private static T ReadSetting<T>(Func<T> read)
         {
@@ -165,13 +170,13 @@ namespace SheetNavigator
             }
             catch (ConfigurationErrorsException ex)
             {
-                RecoverSettings(ex);
+                if (!TryRecoverSettings(ex)) throw;
                 return read();
             }
         }
 
         /// <summary>
-        /// Changes a setting in memory, resetting the settings file first if .NET reports it unreadable.
+        /// Changes a setting in memory, resetting the settings file first if it is corrupt.
         /// </summary>
         private static void WriteSetting(Action write)
         {
@@ -181,14 +186,13 @@ namespace SheetNavigator
             }
             catch (ConfigurationErrorsException ex)
             {
-                RecoverSettings(ex);
+                if (!TryRecoverSettings(ex)) throw;
                 write();
             }
         }
 
         /// <summary>
-        /// Saves every settings change made so far, resetting the settings file first if .NET reports
-        /// it unreadable. Called once per user action, however many values that action changed.
+        /// Saves every settings change made so far, once per user action; a corrupt settings file is reset first.
         /// </summary>
         private static void SaveSettings()
         {
@@ -198,27 +202,70 @@ namespace SheetNavigator
             }
             catch (ConfigurationErrorsException ex)
             {
-                RecoverSettings(ex);
+                if (!TryRecoverSettings(ex)) throw;
                 Properties.Settings.Default.Save();
             }
         }
 
         /// <summary>
-        /// A user.config left truncated by a crash makes every settings call throw until it is deleted.
-        /// Deletes it and reloads the defaults; the file entries start over.
+        /// Deletes a corrupt user.config (a crash can leave it truncated) and reloads the defaults, so
+        /// the file entries start over. Returns false, keeping the file, for any other failure.
         /// </summary>
-        private static void RecoverSettings(ConfigurationErrorsException ex)
+        private static bool TryRecoverSettings(ConfigurationErrorsException ex)
         {
             string file = ex.Filename ?? (ex.InnerException as ConfigurationErrorsException)?.Filename;
-            Diagnostics.Write("Settings file unreadable, resetting it: " + (file ?? "(unknown path)") + " | " + ex.Message);
 
+            // A locked or unreadable file is not corrupt; deleting it would throw the user's settings away
+            if (!IsCorruptUserConfig(ex, file))
+            {
+                Diagnostics.Write("Settings unavailable, file kept: " + (file ?? "(unknown path)") + " | " + ex);
+                return false;
+            }
+
+            Diagnostics.Write("Settings file corrupt, resetting it: " + file + " | " + ex.Message);
             try
             {
-                if (!string.IsNullOrEmpty(file) && File.Exists(file)) File.Delete(file);
+                File.Delete(file);
             }
-            catch { }
+            catch (Exception deleteException)
+            {
+                Diagnostics.Write("Could not delete the settings file: " + deleteException);
+                return false;
+            }
 
             Properties.Settings.Default.Reload();
+            return true;
+        }
+
+        /// <summary>
+        /// True only for an existing file under the user's profile that .NET could not parse as XML.
+        /// </summary>
+        private static bool IsCorruptUserConfig(Exception ex, string file)
+        {
+            if (string.IsNullOrEmpty(file) || !File.Exists(file) || !IsUnderUserProfile(file)) return false;
+
+            for (Exception inner = ex; inner != null; inner = inner.InnerException)
+            {
+                if (inner is XmlException) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// True if the file lives under the user's local or roaming application data, where user.config lives.
+        /// </summary>
+        private static bool IsUnderUserProfile(string file)
+        {
+            string fullPath = Path.GetFullPath(file);
+            foreach (Environment.SpecialFolder folder in new[] { Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolder.ApplicationData })
+            {
+                string root = Environment.GetFolderPath(folder);
+                if (string.IsNullOrEmpty(root)) continue;
+
+                root = root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -238,7 +285,6 @@ namespace SheetNavigator
             try
             {
                 Diagnostics.HookUnhandledExceptions();
-                Diagnostics.Write("Startup");
 
                 UpgradeSettingsIfNeeded();
 
@@ -257,14 +303,13 @@ namespace SheetNavigator
             catch (Exception ex)
             {
                 Diagnostics.Write("Startup failed: " + ex);
-                MessageBox.Show($"SheetNavigator failed to initialize components.\n\nError Details: {ex.Message}",
+                MessageBox.Show(ExcelOwner(), $"SheetNavigator failed to initialize components.\n\nError Details: {ex.Message}",
                                 "Initialization Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         /// <summary>
-        /// Carries settings forward after an Office update. The settings folder is named after
-        /// the Excel build, so a new build would otherwise start empty.
+        /// Carries settings forward after an Office update, since the settings folder is named after the Excel build.
         /// </summary>
         private void UpgradeSettingsIfNeeded()
         {
@@ -273,11 +318,14 @@ namespace SheetNavigator
                 if (!ReadSetting(() => Properties.Settings.Default.UpgradeRequired)) return;
 
                 Properties.Settings.Default.Upgrade();
-                Properties.Settings.Default.UpgradeRequired = false;
+                WriteSetting(() => Properties.Settings.Default.UpgradeRequired = false);
                 SaveSettings();
-                Diagnostics.Write("Settings upgraded from a previous Excel build");
             }
-            catch { /* Nothing to carry over */ }
+            catch (Exception ex)
+            {
+                // The flag stays set, so the next start tries again; without the log that retry would be invisible
+                Diagnostics.Write("Settings upgrade failed: " + ex);
+            }
         }
 
         /// <summary>
@@ -294,8 +342,7 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Drops panes whose window is gone, restores the pane the first time a window is seen and
-        /// syncs the Ribbon button. Working in a window again means any pending close was cancelled.
+        /// Drops panes whose window is gone, restores the pane the first time a window is seen and syncs the Ribbon button.
         /// </summary>
         private void Application_WindowActivate(Excel.Workbook workbook, Excel.Window window)
         {
@@ -304,6 +351,7 @@ namespace SheetNavigator
                 PruneDeadPanes();
                 RememberPath(window, workbook);
 
+                // Working in the window again means any pending close was cancelled
                 PaneEntry entry = FindPane(window);
                 if (entry != null) entry.IsClosing = false;
 
@@ -314,28 +362,33 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Flags the workbook's panes as closing. Excel asks about unsaved changes after this event,
-        /// so the close may still be cancelled; working in a window again clears its flag, and
-        /// <see cref="PruneDeadPanes"/> removes the panes once the window is really gone.
+        /// Records anything the user changed just before the close, then flags the workbook's panes as
+        /// closing so the hide raised by the teardown is not taken for the user's.
         /// </summary>
         private void Application_WorkbookBeforeClose(Excel.Workbook workbook, ref bool cancel)
         {
             try
             {
+                // A hide or resize still waiting for its delay happened before the close began, so it is the user's
+                FlushPendingSaves();
+
+                // Excel asks about unsaved changes after this event, so the close may still be cancelled; the
+                // flag is cleared when the user works in the window again or when a change outlives the re-checks
                 foreach (Excel.Window window in workbook.Windows)
                 {
                     PaneEntry entry = FindPane(window);
-                    if (entry != null) entry.IsClosing = true;
+                    if (entry == null) continue;
+
+                    entry.IsClosing = true;
+                    entry.ClosingRechecks = 0;
                 }
             }
-            catch { /* Windows may already be gone */ }
+            catch (Exception ex) { Diagnostics.Write("BeforeClose failed: " + ex); }
         }
 
         /// <summary>
-        /// After a save under a new path (first save or Save As), writes the workbook's pane state as that
-        /// path's entry, replacing any entry the path already had; a shown pane also sets the defaults.
-        /// A workbook with no pane (its entry said hidden) passes the old path's entry on, still hidden.
-        /// A save under the same path writes nothing.
+        /// After a first save or Save As, writes the pane's state as the new path's entry (a workbook
+        /// with no pane passes its hidden entry on); a save under the same path writes nothing.
         /// </summary>
         private void Application_WorkbookAfterSave(Excel.Workbook workbook, bool success)
         {
@@ -362,6 +415,7 @@ namespace SheetNavigator
                     if (source == null || (!source.Pane.Visible && entry.Pane.Visible)) source = entry;
                 }
 
+                // A shown pane is the source and also sets the defaults; a hidden one only gets an entry
                 if (source != null)
                 {
                     if (source.Pane.Visible)
@@ -381,7 +435,7 @@ namespace SheetNavigator
                     SaveSettings();
                 }
             }
-            catch { /* Nothing to record */ }
+            catch (Exception ex) { Diagnostics.Write("AfterSave failed: " + ex); }
         }
 
         /// <summary>
@@ -403,7 +457,8 @@ namespace SheetNavigator
 
                     if (!IsAlive(entry) || !entry.Pane.Visible || !SameWorkbook(entry.Control.Workbook, activeWorkbook)) continue;
 
-                    if (ReferenceEquals(entry, activeEntry))
+                    // A macro with screen updating off may activate every sheet in turn; the list catches up on the next tick
+                    if (ReferenceEquals(entry, activeEntry) && this.Application.ScreenUpdating)
                     {
                         entry.Control.RefreshWorksheets(activeWorkbook);
                     }
@@ -417,8 +472,8 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Shows or hides a window's pane as a user action. Called by the Ribbon button with the
-        /// state the button now shows. The file's entry is updated by <see cref="Pane_VisibleChanged"/>.
+        /// Shows or hides a window's pane as a user action (the Ribbon button, with the state it now
+        /// shows). The file's entry is updated by <see cref="Pane_VisibleChanged"/>.
         /// </summary>
         public void SetPaneVisible(Excel.Window window, bool visible)
         {
@@ -440,9 +495,8 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// The first time a window is seen, shows its pane if the workbook's entry says visible; the
-        /// pane is created from the entry's dock position and size. After that the pane keeps whatever
-        /// state the user left it in. Never writes settings.
+        /// The first time a window is seen, shows its pane from the entry's dock position and size if
+        /// the workbook's entry says visible. Never writes settings.
         /// </summary>
         private void RestorePane(Excel.Workbook workbook, Excel.Window window)
         {
@@ -450,6 +504,7 @@ namespace SheetNavigator
 
             try
             {
+                // After the first time the pane keeps whatever state the user left it in
                 if (FindPane(window) != null) return;
                 if (!HasPath(workbook)) return;
                 if (!TryGetEntry(workbook.FullName, out _, out _, out _, out bool visible) || !visible) return;
@@ -457,16 +512,13 @@ namespace SheetNavigator
                 PaneEntry entry = GetOrCreatePane(window);
                 entry.Control.RefreshWorksheets(workbook);
                 SetPaneVisibleSilently(entry.Pane, true);
-                Diagnostics.Write($"Restored pane for {workbook.Name} (window {entry.Hwnd}, {DockPositionName(entry.RecordedDock)}, width {entry.RecordedWidth}, height {entry.RecordedHeight})");
             }
             catch (Exception ex) { Diagnostics.Write("RestorePane failed: " + ex); }
         }
 
         /// <summary>
-        /// Syncs the Ribbon button, then records user actions: showing the pane marks the file's entry
-        /// visible, adding one from the pane if the file has none; hiding it marks the entry hidden once
-        /// <see cref="HideSaveTimer_Tick"/> has seen the window survive. A workbook without a path has
-        /// no entry. Changes made by the add-in itself are ignored.
+        /// Syncs the Ribbon button, then records a user's show at once and queues a user's hide;
+        /// changes made by the add-in itself are ignored.
         /// </summary>
         private void Pane_VisibleChanged(object sender, EventArgs e)
         {
@@ -477,59 +529,103 @@ namespace SheetNavigator
                 if (isProgrammaticPaneChange || !(sender is CustomTaskPane pane)) return;
 
                 PaneEntry entry = FindEntry(pane);
-                if (entry == null || entry.IsClosing) return;
+                if (entry == null) return;
 
                 if (pane.Visible)
                 {
+                    // Only the user shows a pane, so any pending close was cancelled
+                    entry.IsClosing = false;
+
                     Excel.Workbook workbook = entry.Control.Workbook ?? this.Application.ActiveWorkbook;
                     if (workbook == null) return;
 
-                    Diagnostics.Write($"User showed pane for {workbook.Name} (window {entry.Hwnd})");
-                    if (HasPath(workbook))
-                    {
-                        string path = workbook.FullName;
-                        if (HasEntry(path)) SetEntryVisible(path, true);
-                        else WriteEntryFromPane(path, entry);
-                        SaveSettings();
-                    }
+                    // A workbook without a path has no entry until it is saved
+                    if (HasPath(workbook)) RecordShow(workbook.FullName, entry);
                     entry.Control.RefreshWorksheets(workbook);
                 }
                 else
                 {
                     // A closing window reports its pane as hidden too, sometimes while Excel still lists
                     // the window, so whether this was the user's doing is decided once the delay has passed
-                    if (!pendingHideEntries.Contains(entry)) pendingHideEntries.Add(entry);
-                    hideSaveTimer.Stop();
-                    hideSaveTimer.Start();
+                    QueueHideSave(entry);
                 }
             }
-            catch (Exception ex)
-            {
-                Diagnostics.Write("VisibleChanged failed: " + ex);
-                MessageBox.Show($"Could not save the pane settings.\n\nDetails: {ex.Message}",
-                                "Save Failure", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
+            catch (Exception ex) { Diagnostics.Write("VisibleChanged failed: " + ex); }
         }
 
         /// <summary>
-        /// Restarts the save delay on every resize, so a drag is written once when it ends.
+        /// Marks the file's entry visible, adding one from the pane if the file has none; a failed save is reported.
+        /// </summary>
+        private void RecordShow(string path, PaneEntry entry)
+        {
+            try
+            {
+                if (HasEntry(path)) SetEntryVisible(path, true);
+                else WriteEntryFromPane(path, entry);
+                SaveSettings();
+            }
+            catch (Exception ex) { ReportSaveFailure("Show", ex); }
+        }
+
+        /// <summary>
+        /// Queues a hide to be recorded once the delay has passed, restarting the delay.
+        /// </summary>
+        private void QueueHideSave(PaneEntry entry)
+        {
+            if (!pendingHideEntries.Contains(entry)) pendingHideEntries.Add(entry);
+            hideSaveTimer.Stop();
+            hideSaveTimer.Start();
+        }
+
+        /// <summary>
+        /// Queues a resize, dock or float to be recorded once the delay has passed, restarting the delay.
+        /// </summary>
+        private void QueueResizeSave(PaneEntry entry)
+        {
+            if (!pendingResizeEntries.Contains(entry)) pendingResizeEntries.Add(entry);
+            resizeSaveTimer.Stop();
+            resizeSaveTimer.Start();
+        }
+
+        /// <summary>
+        /// Records every queued hide and layout change now, for a close or shutdown that would otherwise drop them.
+        /// </summary>
+        private void FlushPendingSaves()
+        {
+            ResizeSaveTimer_Tick(null, null);
+            HideSaveTimer_Tick(null, null);
+        }
+
+        /// <summary>
+        /// True while a queued change must keep waiting because its workbook's close is still pending;
+        /// a window still open after the last re-check survived a cancelled close.
+        /// </summary>
+        private static bool StillClosing(PaneEntry entry)
+        {
+            if (!entry.IsClosing) return false;
+            if (++entry.ClosingRechecks < ClosingRecheckLimit) return true;
+
+            entry.IsClosing = false;
+            return false;
+        }
+
+        /// <summary>
+        /// Queues the resize so a drag is written once, when it ends.
         /// </summary>
         private void Control_Resize(object sender, EventArgs e)
         {
             try
             {
                 PaneEntry entry = FindEntry(sender as SheetNavigatorControl);
-                if (entry == null || entry.IsClosing || !IsAlive(entry) || !entry.Pane.Visible) return;
+                if (entry == null || !IsAlive(entry) || !entry.Pane.Visible) return;
 
-                pendingResizeEntry = entry;
-                resizeSaveTimer.Stop();
-                resizeSaveTimer.Start();
+                QueueResizeSave(entry);
             }
-            catch { /* Excel is busy */ }
+            catch (Exception ex) { Diagnostics.Write("Resize failed: " + ex); }
         }
 
         /// <summary>
-        /// Records the resized pane once resizing has settled.
+        /// Records the layout changes that have settled; a pane whose window is gone was changed by the teardown.
         /// </summary>
         private void ResizeSaveTimer_Tick(object sender, EventArgs e)
         {
@@ -537,18 +633,27 @@ namespace SheetNavigator
             {
                 resizeSaveTimer.Stop();
 
-                PaneEntry entry = pendingResizeEntry;
-                pendingResizeEntry = null;
-                if (entry == null || entry.IsClosing || !IsAlive(entry) || !entry.Pane.Visible) return;
+                List<PaneEntry> entries = new List<PaneEntry>(pendingResizeEntries);
+                pendingResizeEntries.Clear();
 
-                RecordPaneChange(entry);
+                foreach (PaneEntry entry in entries)
+                {
+                    if (!IsAlive(entry) || !IsWindowOpen(entry.Hwnd) || !entry.Pane.Visible) continue;
+                    if (StillClosing(entry))
+                    {
+                        QueueResizeSave(entry);
+                        continue;
+                    }
+
+                    RecordPaneChange(entry);
+                }
             }
-            catch { /* Excel is busy */ }
+            catch (Exception ex) { ReportSaveFailure("Resize", ex); }
         }
 
         /// <summary>
-        /// Records the hides that have settled. A pane whose window is gone, closing or disposed was
-        /// hidden by the teardown, not the user, and one shown again meanwhile is left alone.
+        /// Records the hides that have settled; a pane whose window is gone was hidden by the teardown,
+        /// and one shown again meanwhile is left alone.
         /// </summary>
         private void HideSaveTimer_Tick(object sender, EventArgs e)
         {
@@ -562,9 +667,10 @@ namespace SheetNavigator
                 bool changed = false;
                 foreach (PaneEntry entry in entries)
                 {
-                    if (entry.IsClosing || !IsAlive(entry) || !IsWindowOpen(entry.Hwnd))
+                    if (!IsAlive(entry) || !IsWindowOpen(entry.Hwnd)) continue;
+                    if (StillClosing(entry))
                     {
-                        Diagnostics.Write($"Ignored hide from closing window {entry.Hwnd}");
+                        QueueHideSave(entry);
                         continue;
                     }
                     if (entry.Pane.Visible) continue;
@@ -572,7 +678,7 @@ namespace SheetNavigator
                     Excel.Workbook workbook = entry.Control.Workbook ?? this.Application.ActiveWorkbook;
                     if (workbook == null) continue;
 
-                    Diagnostics.Write($"User hid pane for {workbook.Name} (window {entry.Hwnd})");
+                    // A file without an entry has nothing to mark hidden
                     if (!HasPath(workbook) || !HasEntry(workbook.FullName)) continue;
 
                     SetEntryVisible(workbook.FullName, false);
@@ -581,19 +687,11 @@ namespace SheetNavigator
 
                 if (changed) SaveSettings();
             }
-            catch (Exception ex)
-            {
-                Diagnostics.Write("Hide save failed: " + ex);
-                MessageBox.Show($"Could not save the pane settings.\n\nDetails: {ex.Message}",
-                                "Save Failure", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
+            catch (Exception ex) { ReportSaveFailure("Hide", ex); }
         }
 
         /// <summary>
-        /// Records the pane when the user docks it left or right or floats it. A pane that just floated
-        /// is given the saved height first, since only a floating pane has a height of its own; Excel
-        /// rejects property sets inside this handler, so that is queued to run right after it returns.
-        /// Floating fires as the pane detaches; Excel may change the width at the same time.
+        /// Queues the dock or float to be recorded; a pane that just floated is given the saved height first.
         /// </summary>
         private void Pane_DockPositionChanged(object sender, EventArgs e)
         {
@@ -602,28 +700,31 @@ namespace SheetNavigator
                 if (isProgrammaticPaneChange || !(sender is CustomTaskPane pane)) return;
 
                 PaneEntry entry = FindEntry(pane);
-                if (entry == null || entry.IsClosing || !IsAlive(entry) || !pane.Visible) return;
+                if (entry == null || !IsAlive(entry) || !pane.Visible) return;
 
+                // Excel rejects property sets inside this handler, so the height is applied right after it returns.
+                // Floating fires as the pane detaches and Excel may change the width at the same time, which
+                // is why every dock change is recorded through the resize delay rather than on the spot.
                 if (pane.DockPosition == Office.MsoCTPDockPosition.msoCTPDockPositionFloating)
                 {
                     entry.Control.BeginInvoke(new Action(() => ApplyFloatingHeight(entry)));
                     return;
                 }
 
-                RecordPaneChange(entry);
+                QueueResizeSave(entry);
             }
             catch (Exception ex) { Diagnostics.Write("DockPositionChanged failed: " + ex); }
         }
 
         /// <summary>
         /// Runs right after the float event's handler returns: gives the floating pane the file's saved
-        /// height (the default if the file has none), then records the pane.
+        /// height (the default if the file has none), then queues the pane to be recorded.
         /// </summary>
         private void ApplyFloatingHeight(PaneEntry entry)
         {
             try
             {
-                if (entry.IsClosing || !IsAlive(entry) || !entry.Pane.Visible) return;
+                if (!IsAlive(entry) || !entry.Pane.Visible) return;
                 if (entry.Pane.DockPosition != Office.MsoCTPDockPosition.msoCTPDockPositionFloating) return;
 
                 // The saved height rather than this pane's own, so two windows on one workbook agree
@@ -632,19 +733,18 @@ namespace SheetNavigator
                 if (HasPath(workbook)) TryGetEntry(workbook.FullName, out _, out _, out height, out _);
 
                 entry.Pane.Height = height;
-                RecordPaneChange(entry);
+                QueueResizeSave(entry);
             }
             catch (Exception ex) { Diagnostics.Write("Floating height failed: " + ex); }
         }
 
         /// <summary>
-        /// After the user docks, floats or resizes a pane: writes its dock position, width and, while
-        /// floating, height to the file's entry if the file has one, and to the defaults, saved once. A layout event
-        /// that changed nothing since the last record is ignored, and so is a pane docked top or bottom.
-        /// A docked pane's height is Excel's, so the recorded height stays.
+        /// Writes a pane's dock position, width and floating height to the file's entry if it has one
+        /// and to the defaults, saved once; a change that left the pane as last recorded writes nothing.
         /// </summary>
         private void RecordPaneChange(PaneEntry entry)
         {
+            // A docked pane's height is Excel's, so the recorded floating height stands while docked
             Office.MsoCTPDockPosition dock = entry.Pane.DockPosition;
             int width = PaneWidth(entry.Pane);
             int height = PaneHeight(entry.Pane, entry.RecordedHeight);
@@ -674,7 +774,7 @@ namespace SheetNavigator
 
                 foreach (PaneEntry entry in panes.Values)
                 {
-                    if (entry.IsClosing || !IsAlive(entry) || !entry.Pane.Visible) continue;
+                    if (!IsAlive(entry) || !entry.Pane.Visible) continue;
                     entry.Control.RefreshQuietly();
                 }
             }
@@ -793,9 +893,13 @@ namespace SheetNavigator
             try
             {
                 // Dock position before size: the pane API expects that order. Only a floating pane takes a height.
-                pane.DockPosition = dock;
-                pane.Width = width;
-                if (dock == Office.MsoCTPDockPosition.msoCTPDockPositionFloating) pane.Height = height;
+                // A value Excel rejects must not stop the pane from being created, or the file could never get one.
+                ApplySavedOrDefault("dock position", () => pane.DockPosition = dock, () => pane.DockPosition = DefaultDockPosition);
+                ApplySavedOrDefault("width", () => pane.Width = width, () => pane.Width = DefaultWidth);
+                if (pane.DockPosition == Office.MsoCTPDockPosition.msoCTPDockPositionFloating)
+                {
+                    ApplySavedOrDefault("height", () => pane.Height = height, () => pane.Height = DefaultHeight);
+                }
 
                 // Width is meaningless when docked top or bottom, so keep the pane on a side or floating. Excel's
                 // "NoHorizontal" is the restriction compatible with a side-docked pane, despite its name.
@@ -822,13 +926,31 @@ namespace SheetNavigator
                 RecordedHeight = PaneHeight(pane, height)
             };
             panes[hwnd] = entry;
-            Diagnostics.Write($"Created pane for {control.Workbook?.Name} (window {hwnd})");
             return entry;
         }
 
         /// <summary>
-        /// Removes panes whose window no longer exists or that Excel has already disposed, and forgets
-        /// the paths of windows that are gone.
+        /// Applies a saved pane value; if Excel rejects it the default is tried, and if that is rejected
+        /// too the pane keeps Excel's own value.
+        /// </summary>
+        private static void ApplySavedOrDefault(string property, Action applySaved, Action applyDefault)
+        {
+            try
+            {
+                applySaved();
+                return;
+            }
+            catch (Exception ex) { Diagnostics.Write($"Saved {property} rejected, trying the default: {ex.Message}"); }
+
+            try
+            {
+                applyDefault();
+            }
+            catch (Exception ex) { Diagnostics.Write($"Default {property} rejected, keeping Excel's: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Removes panes whose window is gone or that Excel disposed, and forgets the paths of windows that are gone.
         /// </summary>
         private void PruneDeadPanes()
         {
@@ -863,13 +985,13 @@ namespace SheetNavigator
         {
             if (!panes.TryGetValue(hwnd, out PaneEntry entry)) return;
             panes.Remove(hwnd);
-            if (ReferenceEquals(pendingResizeEntry, entry)) pendingResizeEntry = null;
+            pendingResizeEntries.Remove(entry);
+            pendingHideEntries.Remove(entry);
 
             try { entry.Pane.VisibleChanged -= Pane_VisibleChanged; } catch { }
             try { entry.Pane.DockPositionChanged -= Pane_DockPositionChanged; } catch { }
             try { entry.Control.Resize -= Control_Resize; } catch { }
             try { this.CustomTaskPanes.Remove(entry.Pane); } catch { /* Already disposed with its window */ }
-            Diagnostics.Write($"Removed pane for window {hwnd}");
         }
 
         /// <summary>
@@ -917,8 +1039,7 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// A height of zero or less (a garbage value) is the fallback. There is no ceiling: Excel keeps
-        /// a floating pane on screen.
+        /// A height of zero or less (a garbage value) is the fallback; there is no ceiling, since Excel keeps a floating pane on screen.
         /// </summary>
         private static int PositiveHeight(int height, int fallback)
         {
@@ -936,11 +1057,11 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// The dock position as written in settings: "Left", "Right" or "Floating". Top and bottom have
-        /// no saved form and are only reachable if Excel rejected the dock restriction, so they throw.
+        /// The dock position as written in settings: "Left", "Right" or "Floating"; top and bottom throw.
         /// </summary>
         private static string DockPositionName(Office.MsoCTPDockPosition dock)
         {
+            // Top and bottom have no saved form and are only reachable if Excel rejected the dock restriction
             switch (dock)
             {
                 case Office.MsoCTPDockPosition.msoCTPDockPositionLeft: return "Left";
@@ -983,8 +1104,7 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Reads a file's entry. Returns false if the file has none. A value that cannot be read falls
-        /// back to its default: the default dock position, width and height, hidden.
+        /// Reads a file's entry, or returns false if the file has none; a value that cannot be read falls back to its default.
         /// </summary>
         private bool TryGetEntry(string path, out Office.MsoCTPDockPosition dock, out int width, out int height, out bool visible)
         {
@@ -1009,14 +1129,14 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Writes a file's entry, replacing any older one. Entries are never removed. Changes the
-        /// settings in memory only; the caller saves once it has written everything.
+        /// Writes a file's entry, replacing any older one, in memory only; the caller saves once it has written everything.
         /// </summary>
         private void WriteEntry(string path, Office.MsoCTPDockPosition dock, int width, int height, bool visible)
         {
+            // The name can throw, so take it before the old entry is removed or that entry would be lost
+            string dockName = DockPositionName(dock);
             RemoveEntries(path);
-            FileEntries.Add($"{path}|{DockPositionName(dock)}|{width}|{height}|{visible}");
-            Diagnostics.Write($"Entry for {path}: {DockPositionName(dock)}, width {width}, height {height}, visible {visible}");
+            FileEntries.Add($"{path}|{dockName}|{width}|{height}|{visible}");
         }
 
         /// <summary>
@@ -1042,21 +1162,15 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Removes every entry for a workbook path and returns how many were removed.
+        /// Removes every entry for a workbook path.
         /// </summary>
-        private int RemoveEntries(string path)
+        private void RemoveEntries(string path)
         {
-            int removed = 0;
             StringCollection entries = FileEntries;
             for (int i = entries.Count - 1; i >= 0; i--)
             {
-                if (IsEntryForPath(entries[i], path))
-                {
-                    entries.RemoveAt(i);
-                    removed++;
-                }
+                if (IsEntryForPath(entries[i], path)) entries.RemoveAt(i);
             }
-            return removed;
         }
 
         /// <summary>
@@ -1068,11 +1182,36 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Stops the timers, unhooks the Excel and pane events and drops the panes. Each step is
-        /// guarded so one failure cannot skip the rest.
+        /// Logs a failed settings save and tells the user, since the pane state they just changed was not kept.
+        /// </summary>
+        private void ReportSaveFailure(string action, Exception ex)
+        {
+            Diagnostics.Write(action + " save failed: " + ex);
+            MessageBox.Show(ExcelOwner(), $"Could not save the pane settings.\n\nDetails: {ex.Message}",
+                            "Save Failure", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        /// <summary>
+        /// Excel's main window as a message box owner, so the box stays in front of Excel; null if Excel will not say.
+        /// </summary>
+        private IWin32Window ExcelOwner()
+        {
+            try
+            {
+                return new WindowHandle(new IntPtr(this.Application.Hwnd));
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Records pending changes, stops the timers, unhooks the Excel and pane events and drops the
+        /// panes; each step is guarded so one failure cannot skip the rest.
         /// </summary>
         private void ThisAddIn_Shutdown(object sender, System.EventArgs e)
         {
+            // A change still waiting for its delay would otherwise be lost with the timers
+            try { FlushPendingSaves(); } catch { }
+
             try { resizeSaveTimer.Stop(); resizeSaveTimer.Dispose(); } catch { }
             try { hideSaveTimer.Stop(); hideSaveTimer.Dispose(); } catch { }
             try { refreshTimer.Stop(); refreshTimer.Dispose(); } catch { }
@@ -1083,7 +1222,6 @@ namespace SheetNavigator
             try { this.Application.SheetActivate -= Application_SheetActivate; } catch { }
 
             foreach (int hwnd in new List<int>(panes.Keys)) RemovePane(hwnd);
-            Diagnostics.Write("Shutdown");
         }
 
         #region VSTO Generated Code
@@ -1109,14 +1247,18 @@ namespace SheetNavigator
             public bool IsClosing { get; set; }
 
             /// <summary>
-            /// The workbook path this pane's entry was last written under (the workbook's path at
-            /// creation, null for an unsaved workbook). A save under another path is a first save or Save As.
+            /// How many times a queued change has waited on <see cref="IsClosing"/>; see <see cref="ClosingRecheckLimit"/>.
+            /// </summary>
+            public int ClosingRechecks { get; set; }
+
+            /// <summary>
+            /// The workbook path this pane's entry was last written under, null for an unsaved workbook;
+            /// a save under another path is a first save or Save As.
             /// </summary>
             public string RecordedPath { get; set; }
 
             /// <summary>
-            /// The dock position last recorded for this pane (set at creation, updated on every
-            /// write), so a layout event that changed nothing is not written again.
+            /// The dock position last recorded for this pane, so a layout event that changed nothing is not written again.
             /// </summary>
             public Office.MsoCTPDockPosition RecordedDock { get; set; }
 
@@ -1126,8 +1268,8 @@ namespace SheetNavigator
             public int RecordedWidth { get; set; }
 
             /// <summary>
-            /// The floating height last recorded for this pane; see <see cref="RecordedDock"/>. A docked
-            /// pane's height is Excel's, so this is always the last floating height.
+            /// The floating height last recorded for this pane; a docked pane's height is Excel's, so
+            /// this is always the last floating height.
             /// </summary>
             public int RecordedHeight { get; set; }
 
@@ -1139,6 +1281,22 @@ namespace SheetNavigator
                 Hwnd = hwnd;
                 Pane = pane;
                 Control = control;
+            }
+        }
+
+        /// <summary>
+        /// Wraps a native window handle for use as a message box owner.
+        /// </summary>
+        private sealed class WindowHandle : IWin32Window
+        {
+            public IntPtr Handle { get; }
+
+            /// <summary>
+            /// Keeps the handle; nothing is created or owned.
+            /// </summary>
+            public WindowHandle(IntPtr handle)
+            {
+                Handle = handle;
             }
         }
     }

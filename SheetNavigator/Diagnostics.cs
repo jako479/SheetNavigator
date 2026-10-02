@@ -5,7 +5,7 @@ using System.Windows.Forms;
 namespace SheetNavigator
 {
     /// <summary>
-    /// Appends rare events and any unhandled exception to %TEMP%\SheetNavigator.log.
+    /// Appends errors and any unhandled exception to %TEMP%\SheetNavigator.log.
     /// Never throws; logging must not be able to break the add-in.
     /// </summary>
     internal static class Diagnostics

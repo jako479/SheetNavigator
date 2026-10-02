@@ -35,8 +35,8 @@ REQUIREMENTS
 
 TROUBLESHOOTING
 ---------------
-Sheet Navigator writes a short log of pane events and any unexpected
-error to %TEMP%\SheetNavigator.log.
+Sheet Navigator writes any unexpected error to
+%TEMP%\SheetNavigator.log.
 
 REMOVAL
 -------

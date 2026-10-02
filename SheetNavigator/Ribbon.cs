@@ -35,8 +35,7 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Button click: shows or hides the pane of the window the button belongs to,
-        /// matching the state the button now displays.
+        /// Button click: shows or hides the pane of the button's own window, matching the state the button now displays.
         /// </summary>
         public void OnWorksheetsToggle(Office.IRibbonControl control, bool pressed)
         {

@@ -22,7 +22,7 @@ An Excel add-in that adds a **Worksheets** pane listing the sheets in the active
 
 ## Troubleshooting
 
-The add-in writes a short log of pane events and any unexpected error to `%TEMP%\SheetNavigator.log`.
+The add-in writes any unexpected error to `%TEMP%\SheetNavigator.log`.
 
 ## Uninstall
 
