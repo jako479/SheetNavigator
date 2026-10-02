@@ -1,1 +1,4 @@
 ## TODO
+
+- [ ] Check in Excel: F6 reaches the pane and Shift+F6 leaves it; arrows, Home/End, PgUp/PgDn and a first letter move the highlight without switching sheets; Enter, a click and a double-click switch and leave focus on the grid; a click on blank space switches nothing and leaves focus on the grid; the highlight stays while the list has focus and snaps back when focus leaves; Narrator announces "Worksheets".
+- [ ] Check in Excel, edge cases: Enter (or a click into the list) while typing in a cell switches nothing and shows no error box; with two windows on one workbook, Enter in one pane switches only that window; a sheet renamed or deleted while highlighted drops out on the next refresh with no error box (the stale-name Enter path is only reachable inside the one-second refresh window, so it is not reliably testable).

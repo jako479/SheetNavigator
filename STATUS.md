@@ -1,13 +1,13 @@
 # Status
 
-[Where things stand now]
+The keyboard-accessible list compiles and is not yet tried in Excel. Next: Ctrl+F5 and run the keyboard check in TODO.md.
 
 ## Decisions
 
+- The list follows the Windows list pattern, as WCAG 2.1.1 requires keyboard operation: arrows and typed letters move the highlight, Enter or a click activates, and focus then goes back to the pane's window so Excel's keys work right away, as after a click on Excel's own sheet tabs. While the list has keyboard focus, refreshes leave the highlight alone. Screen readers get the name Worksheets.
 - A change queued while a workbook's close is pending is re-checked every half second for up to two seconds; a window still open by then survived a cancelled close, so the change is the user's and is recorded. A hide or resize still queued when a close or Excel shutdown begins is recorded first, since it happened before the close.
 - Only a settings file .NET cannot parse as XML, under the user's profile, is deleted and reset; a locked or otherwise unavailable file is kept and the failure reported, so a transient error cannot wipe the saved entries.
 - A saved dock position, width or height that Excel rejects falls back to the default, and a rejected default leaves Excel's own, so a bad entry can never stop a file from getting a pane.
-- Every mouse release on the list activates the pane's window, so Excel's own Ctrl+PgUp/PgDn work right after a click; the list itself still swallows keys.
 - The list is not rebuilt while a macro has screen updating off; it catches up on the first tick after the macro restores it.
 - The log holds errors only; per-event lines were dropped before release.
 - A dock or float is recorded through the same half-second delay as a resize, since Excel may still be changing the width when the dock event fires.
@@ -20,7 +20,6 @@
 - A file's entry is never removed; hiding the pane marks it hidden so the position and size survive. Pane behavior per event is in DESIGN.md.
 - No automated tests: the testable logic is private to ThisAddIn, which only exists inside Excel, and extracting it is not worth it for an add-in this size.
 - State lives in the user's settings, never in the workbook, so opening the pane never dirties a file.
-- A sheet is activated when the mouse button is released on its name, so dragging across the list jumps once; keyboard navigation in the pane is blocked, since Ctrl+PgUp/PgDn already covers it.
 - The signing key stays out of the repo; contributors create their own test certificate.
 - No keyboard hotkey: Application.OnKey cannot reach VSTO code without a VBA bridge.
 - The release ZIP is made by hand; zipping is not a VSTO publish convention.

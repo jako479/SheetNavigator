@@ -1,6 +1,6 @@
 # Sheet Navigator
 
-An Excel add-in that adds a **Worksheets** pane listing the sheets in the active workbook. Click a name to jump to that sheet. Sheet Navigator remembers, per file, whether the pane was open, where it was and how big it was.
+An Excel add-in that adds a **Worksheets** pane listing the sheets in the active workbook. Click a name, or arrow to it and press Enter, to jump to that sheet. Sheet Navigator remembers, per file, whether the pane was open, where it was and how big it was.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ An Excel add-in that adds a **Worksheets** pane listing the sheets in the active
 ## Use
 
 - **View, Navigate, Worksheets** shows or hides the pane. Press Alt to see the KeyTips.
-- Click a sheet in the pane to activate it.
+- Click a sheet in the pane to activate it, or move to it with the arrow keys or its first letter and press Enter.
 - The pane's open state, position (left, right or floating) and size are remembered for each workbook file, and kept while the pane is hidden. This is stored in your user profile; nothing is written to the workbook. See DESIGN.md for the details.
 - A new pane opens where you last had one, at the size you last used (right and 150 points wide at first; a floating pane starts 400 points tall).
 

@@ -169,19 +169,27 @@ chart sheet is active, nothing is highlighted.
   highlight is updated.
 - The pointer enters the list.
 - The pane is shown or restored.
-- A click on a sheet name could not jump (the sheet was renamed or removed).
+- Activating a name could not jump (the sheet was renamed or removed).
 
 A refresh rebuilds the list only when the visible names changed, so it
 catches sheets that were added, deleted, renamed, moved, hidden or unhidden,
 even though Excel raises no event for a rename or a move. The highlight then
-moves to the window's active sheet.
+moves to the window's active sheet, unless the keyboard is using the list.
 
-**Clicking a name** activates that sheet in the pane's own window. The jump
-happens when the mouse button is released, so dragging across names jumps
-once, where the drag ends. A release on the blank space below the names
-only puts the highlight back. Every release hands focus back to the pane's
-window, so Excel's keys work right after a click. Keyboard navigation in
-the list is blocked; Ctrl+PgUp/PgDn already covers it.
+**Keyboard and mouse**
+
+- Arrows, Home, End, PgUp, PgDn and typed letters move the highlight without
+  switching sheets, as in any Windows list.
+- Enter or a click on a name activates that sheet in the pane's own window.
+  A click on the blank space below the names activates nothing.
+- After Enter or a click, focus goes back to the pane's window, whether or
+  not the jump happened, so Excel's keys work right away.
+- While the list has keyboard focus the highlight is the user's cursor:
+  refreshes leave it where it is, and a rebuild puts it back on the same name
+  if that sheet still exists. When focus leaves the list, the highlight
+  returns to the active sheet.
+- The pane handles no other keys.
+- Screen readers announce the list as "Worksheets".
 
 ## Diagnostics
 

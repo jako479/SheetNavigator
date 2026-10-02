@@ -3,7 +3,8 @@ SHEET NAVIGATOR - INSTALLATION
 ============================================================
 
 Sheet Navigator adds a Worksheets pane to Excel that lists the
-sheets in the active workbook. Click a name to jump to it.
+sheets in the active workbook. Click a name to jump to it, or
+pick it with the arrow keys and press Enter.
 
 STEP 1: EXTRACT THE FILES
 -------------------------

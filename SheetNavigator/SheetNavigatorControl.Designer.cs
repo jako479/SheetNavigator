@@ -33,6 +33,7 @@
             // 
             // WorksheetList
             // 
+            this.WorksheetList.AccessibleName = "Worksheets";
             this.WorksheetList.Dock = System.Windows.Forms.DockStyle.Fill;
             this.WorksheetList.FormattingEnabled = true;
             this.WorksheetList.HorizontalScrollbar = true;
