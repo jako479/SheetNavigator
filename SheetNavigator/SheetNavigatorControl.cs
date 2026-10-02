@@ -27,6 +27,9 @@ namespace SheetNavigator
         /// </summary>
         internal Excel.Workbook Workbook { get; set; }
 
+        /// <summary>
+        /// The workbook the list reads: the pane's own, or the active workbook if none was set.
+        /// </summary>
         private Excel.Workbook TargetWorkbook
         {
             get { return Workbook ?? Globals.ThisAddIn.Application.ActiveWorkbook; }
@@ -40,18 +43,18 @@ namespace SheetNavigator
             InitializeComponent();
 
             // Keys move the highlight natively; only Enter or a click activates, and either hands focus back to the window
-            this.WorksheetList.PreviewKeyDown += new PreviewKeyDownEventHandler(WorksheetList_PreviewKeyDown);
-            this.WorksheetList.KeyDown += new KeyEventHandler(WorksheetList_KeyDown);
-            this.WorksheetList.MouseClick += new MouseEventHandler(WorksheetList_MouseClick);
+            this.worksheetList.PreviewKeyDown += new PreviewKeyDownEventHandler(WorksheetList_PreviewKeyDown);
+            this.worksheetList.KeyDown += new KeyEventHandler(WorksheetList_KeyDown);
+            this.worksheetList.MouseClick += new MouseEventHandler(WorksheetList_MouseClick);
 
             // A double-click's second release raises only this event, so it takes the same path to hand focus back
-            this.WorksheetList.MouseDoubleClick += new MouseEventHandler(WorksheetList_MouseClick);
+            this.worksheetList.MouseDoubleClick += new MouseEventHandler(WorksheetList_MouseClick);
 
             // Once the keyboard leaves the list, the highlight follows the active sheet again
-            this.WorksheetList.LostFocus += new EventHandler(WorksheetList_LostFocus);
+            this.worksheetList.LostFocus += new EventHandler(WorksheetList_LostFocus);
 
             // Excel raises no event for a sheet rename or reorder, so check as the pointer arrives
-            this.WorksheetList.MouseEnter += new EventHandler(WorksheetList_MouseEnter);
+            this.worksheetList.MouseEnter += new EventHandler(WorksheetList_MouseEnter);
         }
 
         /// <summary>
@@ -70,22 +73,22 @@ namespace SheetNavigator
             }
 
             // A rebuild drops the highlight; a keyboard user gets it back on the same name if it survived
-            string highlighted = IsKeyboardNavigating ? this.WorksheetList.SelectedItem as string : null;
+            string highlighted = IsKeyboardNavigating ? this.worksheetList.SelectedItem as string : null;
 
-            this.WorksheetList.BeginUpdate();
+            this.worksheetList.BeginUpdate();
             try
             {
-                this.WorksheetList.Items.Clear();
-                foreach (string name in names) this.WorksheetList.Items.Add(name);
+                this.worksheetList.Items.Clear();
+                foreach (string name in names) this.worksheetList.Items.Add(name);
             }
             finally
             {
-                this.WorksheetList.EndUpdate();
+                this.worksheetList.EndUpdate();
             }
 
             if (highlighted != null && names.Contains(highlighted))
             {
-                this.WorksheetList.SelectedItem = highlighted;
+                this.worksheetList.SelectedItem = highlighted;
             }
             else
             {
@@ -116,15 +119,15 @@ namespace SheetNavigator
                 object active = Window != null ? Window.ActiveSheet : TargetWorkbook?.ActiveSheet;
                 if (active is Excel.Worksheet currentSheet)
                 {
-                    this.WorksheetList.SelectedItem = currentSheet.Name;
+                    this.worksheetList.SelectedItem = currentSheet.Name;
                 }
                 else
                 {
                     // Leaving the old sheet highlighted would make the list disagree with the window
-                    this.WorksheetList.SelectedIndex = -1;
+                    this.worksheetList.SelectedIndex = -1;
                 }
             }
-            catch { /* Leave the highlight alone */ }
+            catch (Exception ex) { Diagnostics.Write("Highlight failed: " + ex); }
         }
 
         /// <summary>
@@ -132,7 +135,7 @@ namespace SheetNavigator
         /// </summary>
         private bool IsKeyboardNavigating
         {
-            get { return this.WorksheetList.Focused; }
+            get { return this.worksheetList.Focused; }
         }
 
         /// <summary>
@@ -154,10 +157,10 @@ namespace SheetNavigator
         /// </summary>
         private bool SameAsList(List<string> names)
         {
-            if (this.WorksheetList.Items.Count != names.Count) return false;
+            if (this.worksheetList.Items.Count != names.Count) return false;
             for (int i = 0; i < names.Count; i++)
             {
-                if (!string.Equals(this.WorksheetList.Items[i] as string, names[i], StringComparison.Ordinal)) return false;
+                if (!string.Equals(this.worksheetList.Items[i] as string, names[i], StringComparison.Ordinal)) return false;
             }
             return true;
         }
@@ -183,7 +186,7 @@ namespace SheetNavigator
                     RefreshWorksheets(workbook);
                 }
             }
-            catch { /* Keep the current list */ }
+            catch (Exception ex) { Diagnostics.Write("Quiet refresh failed: " + ex); }
         }
 
         /// <summary>
@@ -258,12 +261,12 @@ namespace SheetNavigator
 
             // IndexFromPoint names the nearest item for any point inside the list, blank space below
             // the names included, so the item's own rectangle decides whether a name was hit.
-            int index = this.WorksheetList.IndexFromPoint(e.Location);
-            bool onName = index != ListBox.NoMatches && this.WorksheetList.GetItemRectangle(index).Contains(e.Location);
+            int index = this.worksheetList.IndexFromPoint(e.Location);
+            bool onName = index != ListBox.NoMatches && this.worksheetList.GetItemRectangle(index).Contains(e.Location);
 
             if (onName)
             {
-                this.WorksheetList.SelectedIndex = index;
+                this.worksheetList.SelectedIndex = index;
                 ActivateHighlightedSheet();
             }
 
@@ -279,7 +282,7 @@ namespace SheetNavigator
             {
                 Window?.Activate();
             }
-            catch { /* Excel is busy; the next click or Enter tries again */ }
+            catch (Exception ex) { Diagnostics.Write("Window activation failed: " + ex); }
         }
 
         /// <summary>
@@ -297,7 +300,7 @@ namespace SheetNavigator
 
             try
             {
-                string sheetName = this.WorksheetList.SelectedItem as string;
+                string sheetName = this.worksheetList.SelectedItem as string;
                 if (sheetName == null) return;
 
                 Excel.Workbook workbook = TargetWorkbook;

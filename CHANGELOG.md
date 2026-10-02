@@ -4,6 +4,8 @@ What changed for users, grouped by release version. Not a commit log.
 
 ## 1.0.0 - 2026-09-30
 
+- Floating height is capped at 1200 points, like the 400-point width cap.
+- Every caught error is logged; a repeating one fills two lines.
 - Initial release.
 - Worksheets pane on the View tab lists the active workbook's visible sheets; click a name, or move to it with the arrow keys or its first letter and press Enter, to jump.
 - Pane open state, position (left, right or floating) and size are remembered per workbook file; hiding the pane keeps its position and size.

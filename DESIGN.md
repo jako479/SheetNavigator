@@ -10,8 +10,9 @@ Everything lives in the user's settings, never in the workbook.
   `C:\Books\Sales.xlsx|Right|180|400|True`.
   - `dock` is `Left`, `Right` or `Floating` (Excel's own names).
   - `width` is in points, capped at 400.
-  - `height` is in points, the pane's height while floating. A docked pane
-    is stretched to the window, so docking leaves it alone.
+  - `height` is in points, the pane's height while floating, capped at
+    1200. A docked pane is stretched to the window, so docking leaves it
+    alone.
   - `visible` is `True` or `False`.
   - Entries are never removed; hiding the pane marks the entry hidden, so
     the file keeps its dock, width and height.
@@ -24,8 +25,9 @@ Everything lives in the user's settings, never in the workbook.
 - A value that cannot be read falls back to its default: dock to
   DefaultDockPosition, width to DefaultWidth, height to DefaultHeight,
   visible to `False`. A settings file whose XML is corrupt is deleted and
-  starts over; a file that is merely locked or unavailable is kept and the
-  failure is reported.
+  starts over, and a reset that happens during a save keeps the values being
+  saved; a file that is merely locked or unavailable is kept and the failure
+  is reported.
 - A saved dock, width or height that Excel rejects when the pane is
   created falls back to the default; if Excel rejects that too, the pane
   keeps Excel's own value.
@@ -75,7 +77,9 @@ waiting when the close begins is recorded at once, since it came first.
 
 **Pane docked or floated** (written once it settles, half a second later)
 
-A pane that just floated is given the saved height first. Then:
+A pane that just floated is given the file's saved height first, right
+before it is written; if Excel rejects the height, the pane keeps its own and
+that is what is written. Then:
 
 1. File with an entry: write the pane's dock and width, and its height if
    it is floating, to the entry, and to the defaults.
@@ -137,7 +141,9 @@ the settings file once, however many values it changed.
 - **Workbook opened / window activated**: panes whose window is gone are
   dropped; the first time a window is seen, its pane is restored from the
   entry if the entry is visible; the Ribbon button is refreshed. Activating
-  a window also brings back the pane after a cancelled close.
+  a window also brings back the pane after a cancelled close. If the pane's
+  first fill or show fails, the pane is dropped and the next activation
+  tries again.
 - **Workbook or window deactivated**: nothing.
 - **Workbook closing**: any hide or layout change still waiting for its
   delay is written first, then its panes are flagged as closing. Excel
@@ -193,5 +199,10 @@ moves to the window's active sheet, unless the keyboard is using the list.
 
 ## Diagnostics
 
-Errors and unhandled exceptions go to `%TEMP%\SheetNavigator.log`, newest
-256 KB kept once it passes 1 MB. Nothing else is logged.
+Every caught error and any unhandled exception go to
+`%TEMP%\SheetNavigator.log`, newest 256 KB kept once it passes 1 MB. A
+message identical to the previous one is counted instead of written, and
+"Last message repeated N times" follows once a different message arrives or
+Excel closes. Two failures are not logged: a failure of the log itself, and
+Excel's expected refusal when Enter or a click lands while a cell or tab
+name is being edited. Nothing else is logged.

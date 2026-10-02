@@ -60,7 +60,11 @@ namespace SheetNavigator
             {
                 return control?.Context as Excel.Window;
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                Diagnostics.Write("Ribbon window lookup failed: " + ex);
+                return null;
+            }
         }
 
         /// <summary>
@@ -72,7 +76,7 @@ namespace SheetNavigator
             {
                 ribbonUI?.InvalidateControl(WorksheetsToggleId);
             }
-            catch { /* The Ribbon may be gone while a window closes */ }
+            catch (Exception ex) { Diagnostics.Write("Ribbon refresh failed (window closing?): " + ex); }
         }
 
         /// <summary>

@@ -5,6 +5,8 @@
     <File Path=".gitignore" />
     <File Path="AGENTS.md" />
     <File Path="CHANGELOG.md" />
+    <File Path="DESIGN.md" />
+    <File Path="LICENSE" />
     <File Path="README.md" />
     <File Path="STATUS.md" />
     <File Path="TODO.md" />
