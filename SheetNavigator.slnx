@@ -13,4 +13,5 @@
     <File Path="release/README.txt" />
   </Folder>
   <Project Path="SheetNavigator/SheetNavigator.csproj" Id="69225fe2-fa56-4e43-90e3-e56328aa4674" />
+  <Project Path="SheetNavigator.Tests/SheetNavigator.Tests.csproj" />
 </Solution>

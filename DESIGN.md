@@ -27,7 +27,7 @@ Everything lives in the user's settings, never in the workbook.
   visible to `False`. A settings file whose XML is corrupt is deleted and
   starts over, and a reset that happens during a save keeps the values being
   saved; a file that is merely locked or unavailable is kept and the failure
-  is reported.
+  is logged.
 - A saved dock, width or height that Excel rejects when the pane is
   created falls back to the default; if Excel rejects that too, the pane
   keeps Excel's own value.
@@ -100,12 +100,13 @@ close or Excel shutdown begins is written at once.
 
 A dock, float or resize event that left the pane exactly as last recorded
 (for example the layout event Excel raises right after a pane is shown)
-writes nothing. A pane docked top or bottom, only possible if Excel rejected
-the add-in's dock restriction, is never recorded: a layout event ignores it,
-and any other attempt to save it is reported as a failure. A pane reporting a width or
-height of zero or less keeps the saved value. A docked pane's height is
-Excel's and is never written, so the saved height is always the last
-floating height.
+writes nothing. A layout change whose save fails is logged and stays
+unrecorded, so the next dock, float or resize tries the save again. A pane
+docked top or bottom, only possible if Excel rejected the add-in's dock
+restriction, is never recorded: a layout event ignores it, and any other
+attempt to save it fails and is logged. A pane reporting a width or height of
+zero or less keeps the saved value. A docked pane's height is Excel's and is
+never written, so the saved height is always the last floating height.
 
 **Workbook saved**
 
@@ -132,7 +133,8 @@ ever written from the settings back to a pane.
 resize, and height too while the pane is floating. Docking never touches
 the saved height. Hiding the pane only marks the entry hidden, and a
 closing workbook saves nothing of its own teardown. Each user action saves
-the settings file once, however many values it changed.
+the settings file once, however many values it changed. A save that fails is
+logged; nothing is shown.
 
 ## Workbook and window events
 

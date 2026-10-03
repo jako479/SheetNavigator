@@ -31,18 +31,6 @@ namespace SheetNavigator
         /// </summary>
         private const int FallbackHeight = 400;
 
-        /// <summary>
-        /// Ceiling for saved widths, on both save and load, to reject a garbage value in the settings file.
-        /// There is no floor: Excel enforces its own minimum whenever a width is set.
-        /// </summary>
-        private const int MaxPaneWidth = 400;
-
-        /// <summary>
-        /// Ceiling for saved floating heights, on both save and load. Excel puts no maximum on a floating
-        /// pane, so a garbage value could push its bottom edge off the screen.
-        /// </summary>
-        private const int MaxPaneHeight = 1200;
-
         /// <summary>The settings file .NET keeps per user: the only file settings recovery may delete.</summary>
         private const string UserConfigFileName = "user.config";
 
@@ -141,7 +129,7 @@ namespace SheetNavigator
         {
             get
             {
-                return ClampPaneWidth(ReadSetting(() => Properties.Settings.Default.DefaultWidth), FallbackWidth);
+                return PaneSizeRules.ClampWidth(ReadSetting(() => Properties.Settings.Default.DefaultWidth), FallbackWidth);
             }
         }
 
@@ -153,7 +141,7 @@ namespace SheetNavigator
         {
             get
             {
-                return ClampPaneHeight(ReadSetting(() => Properties.Settings.Default.DefaultHeight), FallbackHeight);
+                return PaneSizeRules.ClampHeight(ReadSetting(() => Properties.Settings.Default.DefaultHeight), FallbackHeight);
             }
         }
 
@@ -238,7 +226,7 @@ namespace SheetNavigator
                 return false;
             }
 
-            Diagnostics.Write("Settings file corrupt, resetting it: " + file + " | " + ex.Message);
+            Diagnostics.Write("Settings file corrupt, deleting it: " + file + " | " + ex.Message);
             try
             {
                 File.Delete(file);
@@ -246,7 +234,7 @@ namespace SheetNavigator
             }
             catch (Exception deleteException)
             {
-                Diagnostics.Write("Could not delete the settings file: " + deleteException);
+                Diagnostics.Write("Settings file delete failed: " + deleteException);
                 return false;
             }
         }
@@ -341,7 +329,7 @@ namespace SheetNavigator
             catch (Exception ex)
             {
                 Diagnostics.Write("Startup failed: " + ex);
-                MessageBox.Show(ExcelOwner(), $"SheetNavigator failed to initialize components.\n\nError Details: {ex.Message}",
+                MessageBox.Show(ExcelOwner(), $"Sheet Navigator failed to initialize components.\n\nError Details: {ex.Message}",
                                 "Initialization Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -421,7 +409,7 @@ namespace SheetNavigator
                     entry.ClosingRechecks = 0;
                 }
             }
-            catch (Exception ex) { Diagnostics.Write("BeforeClose failed: " + ex); }
+            catch (Exception ex) { Diagnostics.Write("WorkbookBeforeClose failed: " + ex); }
         }
 
         /// <summary>
@@ -473,7 +461,7 @@ namespace SheetNavigator
                     SaveSettings();
                 }
             }
-            catch (Exception ex) { Diagnostics.Write("AfterSave failed: " + ex); }
+            catch (Exception ex) { Diagnostics.Write("WorkbookAfterSave failed: " + ex); }
         }
 
         /// <summary>
@@ -603,7 +591,7 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Marks the file's entry visible, adding one from the pane if the file has none; a failed save is reported.
+        /// Marks the file's entry visible, adding one from the pane if the file has none; a failed save is logged.
         /// </summary>
         private void RecordShow(string path, PaneEntry entry)
         {
@@ -613,7 +601,7 @@ namespace SheetNavigator
                 else WriteEntryFromPane(path, entry);
                 SaveSettings();
             }
-            catch (Exception ex) { ReportSaveFailure("Show", ex); }
+            catch (Exception ex) { Diagnostics.Write("Show save failed: " + ex); }
         }
 
         /// <summary>
@@ -699,7 +687,7 @@ namespace SheetNavigator
                     RecordPaneChange(entry);
                 }
             }
-            catch (Exception ex) { ReportSaveFailure("Resize", ex); }
+            catch (Exception ex) { Diagnostics.Write("Resize save failed: " + ex); }
         }
 
         /// <summary>
@@ -738,7 +726,7 @@ namespace SheetNavigator
 
                 if (changed) SaveSettings();
             }
-            catch (Exception ex) { ReportSaveFailure("Hide", ex); }
+            catch (Exception ex) { Diagnostics.Write("Hide save failed: " + ex); }
         }
 
         /// <summary>
@@ -788,6 +776,7 @@ namespace SheetNavigator
         /// <summary>
         /// Writes a pane's dock position, width and floating height to the file's entry if it has one
         /// and to the defaults, saved once; a change that left the pane as last recorded writes nothing.
+        /// The values are recorded only once saved, so a failed save is retried by the next layout event.
         /// </summary>
         private void RecordPaneChange(PaneEntry entry)
         {
@@ -800,14 +789,14 @@ namespace SheetNavigator
             // Top and bottom are only reachable if Excel rejected the dock restriction; they have no saved form
             if (dock == Office.MsoCTPDockPosition.msoCTPDockPositionTop || dock == Office.MsoCTPDockPosition.msoCTPDockPositionBottom) return;
 
-            entry.RecordedDock = dock;
-            entry.RecordedWidth = width;
-            entry.RecordedHeight = height;
-
             Excel.Workbook workbook = entry.Control.Workbook;
             if (HasPath(workbook) && HasEntry(workbook.FullName)) WriteEntry(workbook.FullName, dock, width, height, true);
             WriteDefaults(dock, width, height);
             SaveSettings();
+
+            entry.RecordedDock = dock;
+            entry.RecordedWidth = width;
+            entry.RecordedHeight = height;
         }
 
         /// <summary>
@@ -1090,29 +1079,11 @@ namespace SheetNavigator
         }
 
         /// <summary>
-        /// Keeps a width within the saved range; a width of zero or less (a garbage value) is the fallback.
-        /// </summary>
-        private static int ClampPaneWidth(int width, int fallback)
-        {
-            if (width <= 0) return fallback;
-            return Math.Min(MaxPaneWidth, width);
-        }
-
-        /// <summary>
         /// The pane's width, within the saved range.
         /// </summary>
         private int PaneWidth(CustomTaskPane pane)
         {
-            return ClampPaneWidth(pane.Width, DefaultWidth);
-        }
-
-        /// <summary>
-        /// Keeps a height within the saved range; a height of zero or less (a garbage value) is the fallback.
-        /// </summary>
-        private static int ClampPaneHeight(int height, int fallback)
-        {
-            if (height <= 0) return fallback;
-            return Math.Min(MaxPaneHeight, height);
+            return PaneSizeRules.ClampWidth(pane.Width, DefaultWidth);
         }
 
         /// <summary>
@@ -1121,7 +1092,7 @@ namespace SheetNavigator
         private static int PaneHeight(CustomTaskPane pane, int fallback)
         {
             return pane.DockPosition == Office.MsoCTPDockPosition.msoCTPDockPositionFloating
-                ? ClampPaneHeight(pane.Height, fallback)
+                ? PaneSizeRules.ClampHeight(pane.Height, fallback)
                 : fallback;
         }
 
@@ -1188,8 +1159,8 @@ namespace SheetNavigator
 
                 string[] values = entry.Substring(path.Length + 1).Split('|');
                 if (values.Length > 0) dock = SavedDockPosition(values[0], dock);
-                if (values.Length > 1 && int.TryParse(values[1], out int parsedWidth)) width = ClampPaneWidth(parsedWidth, width);
-                if (values.Length > 2 && int.TryParse(values[2], out int parsedHeight)) height = ClampPaneHeight(parsedHeight, height);
+                if (values.Length > 1 && int.TryParse(values[1], out int parsedWidth)) width = PaneSizeRules.ClampWidth(parsedWidth, width);
+                if (values.Length > 2 && int.TryParse(values[2], out int parsedHeight)) height = PaneSizeRules.ClampHeight(parsedHeight, height);
                 if (values.Length > 3 && bool.TryParse(values[3], out bool parsedVisible)) visible = parsedVisible;
                 return true;
             }
@@ -1248,16 +1219,6 @@ namespace SheetNavigator
         private static bool IsEntryForPath(string entry, string path)
         {
             return entry != null && entry.StartsWith(path + "|", StringComparison.OrdinalIgnoreCase);
-        }
-
-        /// <summary>
-        /// Logs a failed settings save and tells the user, since the pane state they just changed was not kept.
-        /// </summary>
-        private void ReportSaveFailure(string action, Exception ex)
-        {
-            Diagnostics.Write(action + " save failed: " + ex);
-            MessageBox.Show(ExcelOwner(), $"Could not save the pane settings.\n\nDetails: {ex.Message}",
-                            "Save Failure", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         /// <summary>

@@ -32,9 +32,13 @@ chained:
 
       "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" SheetNavigator.csproj -t:Compile -p:Configuration=Release
 
-That compiles without registering the add-in. There is no test project;
-behavior is verified by the human in Excel with Ctrl+F5 (Release, start without
-debugging). Never use the Debug configuration or F5.
+That compiles without registering the add-in. The tests, from the repo root:
+
+      dotnet test SheetNavigator.Tests\SheetNavigator.Tests.csproj
+
+They cover only the pure size rules; everything else is verified by the human
+in Excel with Ctrl+F5 (Release, start without debugging). Never use the Debug
+configuration or F5.
 
 Never run a build as a baseline check before you have changed anything,
 including when setting up a worktree. A skill step that says to is overridden
@@ -62,8 +66,11 @@ by this rule.
 
 ## Testing
 
-- No test project yet. Verify with the compile command above, then tell the
-  human exactly what to check in Excel after Ctrl+F5.
+- SheetNavigator.Tests (MSTest) covers PaneSizeRules only, compiled in as a
+  linked file because the add-in assembly needs the VSTO runtime. A new or
+  changed limit gets tests at the limit and one past it.
+- Everything else: verify with the compile command above, then tell the human
+  exactly what to check in Excel after Ctrl+F5.
 
 ## Docs
 
