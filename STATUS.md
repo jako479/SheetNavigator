@@ -1,11 +1,11 @@
 # Status
 
-The code review fixes, the keyboard-accessible list and the changes matched to Contracts File Navigator on 2026-10-02 compile, and the size rules pass their tests; none are yet tried in Excel. Next: Ctrl+F5 and run the checks in TODO.md.
+The code review fixes, the keyboard-accessible list and the changes matched to Contracts File Navigator on 2026-10-02 compile; none are yet tried in Excel. Next: Ctrl+F5 and run the checks in TODO.md.
 
 ## Decisions
 
 - A failed settings save is logged, never shown: a layout save is minor, and a disk or permission problem would otherwise pop a dialog after every drag. A layout change is recorded only once its save succeeds, so the next layout event retries it.
-- Automated tests cover only the pure size rules (PaneSizeRules, compiled into SheetNavigator.Tests as a linked file); everything else needs Excel and is verified by hand.
+- No automated tests: the testable logic is private to ThisAddIn, which only exists inside Excel, and extracting it is not worth it for an add-in this size.
 - Floating height is capped at 1200 points on save and load, like the 400-point width cap: Excel puts no maximum on a floating pane, so a garbage value could push its bottom edge off the screen.
 - Every caught error is logged; identical consecutive messages are written once, followed by "Last message repeated N times" when a different message arrives or Excel closes, so a failure repeating every second fills two lines. Only two failures stay unlogged: a failure of the log itself, and Excel's expected refusal when Enter or a click lands mid-edit.
 - A pane whose first fill or show fails on restore is dropped and logged, so the next activation tries again instead of finding a hidden pane and leaving it.

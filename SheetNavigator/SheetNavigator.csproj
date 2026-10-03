@@ -237,9 +237,6 @@
     <Compile Include="Diagnostics.cs">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="PaneSizeRules.cs">
-      <SubType>Code</SubType>
-    </Compile>
     <Compile Include="Ribbon.cs">
       <SubType>Code</SubType>
     </Compile>

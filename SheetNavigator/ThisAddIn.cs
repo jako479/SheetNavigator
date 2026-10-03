@@ -31,6 +31,18 @@ namespace SheetNavigator
         /// </summary>
         private const int FallbackHeight = 400;
 
+        /// <summary>
+        /// Ceiling for saved widths, on both save and load, to reject a garbage value in the settings file.
+        /// There is no floor: Excel enforces its own minimum whenever a width is set.
+        /// </summary>
+        private const int MaxPaneWidth = 400;
+
+        /// <summary>
+        /// Ceiling for saved floating heights, on both save and load. Excel puts no maximum on a floating
+        /// pane, so a garbage value could push its bottom edge off the screen.
+        /// </summary>
+        private const int MaxPaneHeight = 1200;
+
         /// <summary>The settings file .NET keeps per user: the only file settings recovery may delete.</summary>
         private const string UserConfigFileName = "user.config";
 
@@ -129,7 +141,7 @@ namespace SheetNavigator
         {
             get
             {
-                return PaneSizeRules.ClampWidth(ReadSetting(() => Properties.Settings.Default.DefaultWidth), FallbackWidth);
+                return ClampPaneWidth(ReadSetting(() => Properties.Settings.Default.DefaultWidth), FallbackWidth);
             }
         }
 
@@ -141,7 +153,7 @@ namespace SheetNavigator
         {
             get
             {
-                return PaneSizeRules.ClampHeight(ReadSetting(() => Properties.Settings.Default.DefaultHeight), FallbackHeight);
+                return ClampPaneHeight(ReadSetting(() => Properties.Settings.Default.DefaultHeight), FallbackHeight);
             }
         }
 
@@ -1079,11 +1091,29 @@ namespace SheetNavigator
         }
 
         /// <summary>
+        /// Keeps a width within the saved range; a width of zero or less (a garbage value) is the fallback.
+        /// </summary>
+        private static int ClampPaneWidth(int width, int fallback)
+        {
+            if (width <= 0) return fallback;
+            return Math.Min(MaxPaneWidth, width);
+        }
+
+        /// <summary>
         /// The pane's width, within the saved range.
         /// </summary>
         private int PaneWidth(CustomTaskPane pane)
         {
-            return PaneSizeRules.ClampWidth(pane.Width, DefaultWidth);
+            return ClampPaneWidth(pane.Width, DefaultWidth);
+        }
+
+        /// <summary>
+        /// Keeps a height within the saved range; a height of zero or less (a garbage value) is the fallback.
+        /// </summary>
+        private static int ClampPaneHeight(int height, int fallback)
+        {
+            if (height <= 0) return fallback;
+            return Math.Min(MaxPaneHeight, height);
         }
 
         /// <summary>
@@ -1092,7 +1122,7 @@ namespace SheetNavigator
         private static int PaneHeight(CustomTaskPane pane, int fallback)
         {
             return pane.DockPosition == Office.MsoCTPDockPosition.msoCTPDockPositionFloating
-                ? PaneSizeRules.ClampHeight(pane.Height, fallback)
+                ? ClampPaneHeight(pane.Height, fallback)
                 : fallback;
         }
 
@@ -1159,8 +1189,8 @@ namespace SheetNavigator
 
                 string[] values = entry.Substring(path.Length + 1).Split('|');
                 if (values.Length > 0) dock = SavedDockPosition(values[0], dock);
-                if (values.Length > 1 && int.TryParse(values[1], out int parsedWidth)) width = PaneSizeRules.ClampWidth(parsedWidth, width);
-                if (values.Length > 2 && int.TryParse(values[2], out int parsedHeight)) height = PaneSizeRules.ClampHeight(parsedHeight, height);
+                if (values.Length > 1 && int.TryParse(values[1], out int parsedWidth)) width = ClampPaneWidth(parsedWidth, width);
+                if (values.Length > 2 && int.TryParse(values[2], out int parsedHeight)) height = ClampPaneHeight(parsedHeight, height);
                 if (values.Length > 3 && bool.TryParse(values[3], out bool parsedVisible)) visible = parsedVisible;
                 return true;
             }
