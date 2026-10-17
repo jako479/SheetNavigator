@@ -10,10 +10,12 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+uv.lock text eol=lf
 
 # Binary assets: never convert line endings, never diff.
 *.png binary
 *.jpg binary
+*.ico binary
 *.pdf binary
 *.xlsx binary
 *.xlsm binary
@@ -21,3 +23,4 @@
 *.pfx binary
 *.dll binary
 *.exe binary
+*.msi binary

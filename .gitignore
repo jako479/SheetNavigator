@@ -13,7 +13,13 @@ publish/
 
 # AI
 .claude/settings.local.json
+CLAUDE.local.md
+.superpowers/
 
 # OS
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
